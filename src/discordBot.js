@@ -9,8 +9,9 @@ import {
   Routes,
   SlashCommandBuilder
 } from "discord.js";
+import { DateTime } from "luxon";
 import {
-  listUpcoming,
+  listUpcomingTodayTomorrow,
   formatEpisodeEntries,
   getMissingTimePostTime
 } from "./schedule.js";
@@ -147,13 +148,18 @@ export function buildAnnouncement(series, release, settings) {
   return { embeds: [embed], allowedMentions: { parse: [] } };
 }
 
-function summaryDateLabel(release, settings) {
+function summaryDateLabel(release, settings, base = DateTime.now()) {
   const value = release?.dateTime || release?.date;
   if (!value) return "No release date";
 
   const date = value.setZone(settings.timeZone || "Europe/Berlin").setLocale("en");
   if (!date.isValid) return "No release date";
-  return date.toFormat("cccc, dd LLL yyyy");
+
+  const zone = settings.timeZone || "Europe/Berlin";
+  const now = base.setZone(zone);
+  const key = date.toISODate();
+  const prefix = key === now.toISODate() ? "Today" : key === now.plus({ days: 1 }).toISODate() ? "Tomorrow" : date.toFormat("cccc");
+  return `${prefix} - ${date.toFormat("cccc, dd LLL yyyy")}`;
 }
 
 function summaryTimeLabel(release, settings) {
@@ -177,15 +183,15 @@ function summaryLine(series, release, settings) {
   const time = escapeMarkdown(summaryTimeLabel(release, settings));
   const episode = escapeMarkdown(summaryEpisodeLabel(series, release) || "Next episode");
   const service = pickPreferredService(series.service, series.preferredService);
-  const serviceText = service ? ` · ${escapeMarkdown(service)}` : "";
+  const serviceText = service ? ` - ${escapeMarkdown(service)}` : "";
 
-  return `• \`${time}\` **${title}**\n  ${episode}${serviceText}`;
+  return `- \`${time}\` **${title}**\n  ${episode}${serviceText}`;
 }
 
-function groupedSummaryFields(items, settings) {
+function groupedSummaryFields(items, settings, base = DateTime.now()) {
   const groups = new Map();
   for (const { series, release } of items) {
-    const label = summaryDateLabel(release, settings);
+    const label = summaryDateLabel(release, settings, base);
     if (!groups.has(label)) groups.set(label, []);
     groups.get(label).push(summaryLine(series, release, settings));
   }
@@ -212,12 +218,12 @@ function groupedSummaryFields(items, settings) {
 
 export function buildUpcomingSummary(items, settings, limit = 12) {
   const visible = items.slice(0, limit);
-  if (!visible.length) return "No upcoming episodes found.";
+  if (!visible.length) return "No releases today or tomorrow.";
 
   const hiddenCount = Math.max(0, items.length - visible.length);
   const description = hiddenCount
-    ? `Showing the next ${visible.length} releases. ${hiddenCount} more are in the current lookahead window.`
-    : `Showing the next ${visible.length} releases in the current lookahead window.`;
+    ? `Showing ${visible.length} of ${items.length} releases for today and tomorrow.`
+    : `Showing ${visible.length} releases for today and tomorrow.`;
   const embed = new EmbedBuilder()
     .setColor(0x8bb4ff)
     .setTitle("Upcoming Episodes")
@@ -257,7 +263,7 @@ export class DiscordService {
       if (!["upcoming", "naechste"].includes(interaction.commandName)) return;
 
       const data = this.store.snapshot();
-      const upcoming = listUpcoming(data.series, data.settings, data.settings.lookaheadDays);
+      const upcoming = listUpcomingTodayTomorrow(data.series, data.settings);
       const message = buildUpcomingSummary(upcoming, data.settings, data.settings.summaryLimit);
       await interaction.reply(messagePayload(message));
     });
