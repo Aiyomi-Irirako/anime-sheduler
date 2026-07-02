@@ -6,7 +6,7 @@ import { APP_NAME, APP_VERSION, STATUS_OPTIONS, WEEKDAYS } from "./constants.js"
 import {
   getNextRelease,
   getFinishedDeletionDate,
-  listUpcoming,
+  listUpcomingTodayTomorrow,
   formatReleaseDate,
   getReleaseDayLabel,
   formatEpisodeEntries,
@@ -149,7 +149,7 @@ function renderStats(data, upcoming) {
   return `<section class="stats">
     <div><small>Series</small><span>${data.series.length}</span></div>
     <div><small>Active</small><span>${active}</span></div>
-    <div><small>In window</small><span>${upcoming.length}</span></div>
+    <div><small>Today/tomorrow</small><span>${upcoming.length}</span></div>
     <div><small>Missing time</small><span>${missingTime}</span></div>
   </section>`;
 }
@@ -349,18 +349,23 @@ function renderPreferredServiceOptions(series) {
   return options.join("");
 }
 
-function renderUpcomingDate(release, settings) {
-  if (!release) return `<div class="date-stack muted-date"><span>No release date</span></div>`;
+function releaseDateKey(release, settings) {
+  const value = release?.dateTime || release?.date;
+  if (!value) return "";
+  const date = value.setZone(settings.timeZone || "Europe/Berlin");
+  return date.isValid ? date.toISODate() : "";
+}
+
+function renderUpcomingTime(release, settings) {
+  if (!release) return `<div class="date-stack muted-date"><span>-</span></div>`;
 
   const localeDate = release.dateTime || release.date;
-  if (!localeDate) return `<div class="date-stack muted-date"><span>No release date</span></div>`;
+  if (!localeDate) return `<div class="date-stack muted-date"><span>-</span></div>`;
 
   const date = localeDate.setZone(settings.timeZone || "Europe/Berlin").setLocale("en");
-  if (!date.isValid) return `<div class="date-stack muted-date"><span>No release date</span></div>`;
+  if (!date.isValid) return `<div class="date-stack muted-date"><span>-</span></div>`;
 
   return `<div class="date-stack ${release.missingTime ? "missing" : ""}">
-    <span class="date-weekday">${escapeHtml(date.toFormat("cccc"))}</span>
-    <span class="date-date">${escapeHtml(date.toFormat("dd LLL yyyy"))}</span>
     <span class="date-time">${escapeHtml(release.missingTime ? "time missing" : date.toFormat("HH:mm"))}</span>
   </div>`;
 }
@@ -371,30 +376,50 @@ function renderUpcoming(upcoming, settings, discordEnabled) {
       .map((entry) => `<span class="episode-line ${escapeHtml(entry.kind)}">${escapeHtml(entry.text)}</span>`)
       .join("")}</div>`;
 
-  const rows = upcoming.length
-    ? upcoming
-        .slice(0, settings.summaryLimit)
-        .map(({ series, release }) => {
-          return `<li>
-            ${renderUpcomingDate(release, settings)}
-            <span><span class="series-name">${escapeHtml(series.title)}</span>${renderEpisodeStack(series, release)}</span>
-            ${renderServiceBadges(series.service, series.preferredService)}
-          </li>`;
-        })
-        .join("")
-    : `<li class="empty">No upcoming episodes in the current window.</li>`;
+  const zone = settings.timeZone || "Europe/Berlin";
+  const now = DateTime.now().setZone(zone);
+  const buckets = [
+    { title: "Today", date: now, empty: "No releases today." },
+    { title: "Tomorrow", date: now.plus({ days: 1 }), empty: "No releases tomorrow." }
+  ];
+
+  const groups = buckets
+    .map((bucket) => {
+      const key = bucket.date.toISODate();
+      const items = upcoming.filter(({ release }) => releaseDateKey(release, settings) === key);
+      const rows = items.length
+        ? items
+            .map(({ series, release }) => {
+              return `<li>
+                ${renderUpcomingTime(release, settings)}
+                <span><span class="series-name">${escapeHtml(series.title)}</span>${renderEpisodeStack(series, release)}</span>
+                ${renderServiceBadges(series.service, series.preferredService)}
+              </li>`;
+            })
+            .join("")
+        : `<li class="empty">${escapeHtml(bucket.empty)}</li>`;
+
+      return `<section class="upcoming-day">
+        <div class="upcoming-day-header">
+          <h3>${escapeHtml(bucket.title)}</h3>
+          <span>${escapeHtml(bucket.date.setLocale("en").toFormat("cccc, dd LLL yyyy"))}</span>
+        </div>
+        <ol class="upcoming-list">${rows}</ol>
+      </section>`;
+    })
+    .join("");
 
   return `<section class="panel">
     <div class="section-title split">
       <div>
         <h2>Upcoming Episodes</h2>
-        <p>Calculated from manual dates, premieres, or weekly release patterns.</p>
+        <p>Only releases scheduled for today and tomorrow are shown here.</p>
       </div>
       <form method="post" action="/post-upcoming">
         <button type="submit" ${discordEnabled ? "" : "disabled"}>Post to Discord</button>
       </form>
     </div>
-    <ol class="upcoming-list">${rows}</ol>
+    <div class="upcoming-days">${groups}</div>
   </section>`;
 }
 
@@ -463,7 +488,7 @@ function renderSeriesTable(seriesList, settings, emptyText = "No series imported
 }
 
 function renderDashboard(data, discordEnabled, query) {
-  const upcoming = listUpcoming(data.series, data.settings, data.settings.lookaheadDays);
+  const upcoming = listUpcomingTodayTomorrow(data.series, data.settings);
   const dashboardSeries = data.series.filter((series) => !isSeriesComplete(series));
   return renderPage(
     APP_NAME,
@@ -875,7 +900,7 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
     "/post-upcoming",
     asyncRoute(async (req, res) => {
       const data = store.snapshot();
-      const upcoming = listUpcoming(data.series, data.settings, data.settings.lookaheadDays);
+      const upcoming = listUpcomingTodayTomorrow(data.series, data.settings);
       const message = buildUpcomingSummary(upcoming, data.settings, data.settings.summaryLimit);
       try {
         await discord.post(message);
@@ -1022,7 +1047,7 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
     "/api/upcoming",
     asyncRoute(async (req, res) => {
       const data = store.snapshot();
-      const upcoming = listUpcoming(data.series, data.settings, data.settings.lookaheadDays).map(({ series, release }) => ({
+      const upcoming = listUpcomingTodayTomorrow(data.series, data.settings).map(({ series, release }) => ({
         id: series.id,
         title: series.title,
         service: series.service,
