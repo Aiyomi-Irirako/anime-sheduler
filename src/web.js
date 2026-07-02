@@ -1,7 +1,7 @@
 import express from "express";
 import path from "node:path";
 import { DateTime } from "luxon";
-import { buildAnnouncement, buildUpcomingSummary } from "./discordBot.js";
+import { buildAnnouncement, buildUpcomingSummary, releaseMentionRoleIds } from "./discordBot.js";
 import { APP_NAME, APP_VERSION, STATUS_OPTIONS, WEEKDAYS } from "./constants.js";
 import {
   getNextRelease,
@@ -163,6 +163,15 @@ function selectedDiscordChannelIds(settings) {
   return new Set(raw.map((id) => cleanString(id)).filter(Boolean));
 }
 
+function selectedDiscordRoleIds(settings, arrayKey, legacyKey) {
+  const raw = Array.isArray(settings[arrayKey]) && settings[arrayKey].length
+    ? settings[arrayKey]
+    : settings[legacyKey]
+      ? [settings[legacyKey]]
+      : [];
+  return new Set(raw.map((id) => cleanString(id)).filter(Boolean));
+}
+
 function renderDiscordChannelSettings(settings, channelGroups, discordEnabled) {
   const selected = selectedDiscordChannelIds(settings);
   const visibleIds = new Set();
@@ -226,7 +235,98 @@ function renderDiscordChannelSettings(settings, channelGroups, discordEnabled) {
   </div>`;
 }
 
-function renderSettings(settings, discordEnabled, channelGroups = []) {
+function renderRolePicker({ name, title, description, selected, roleGroups, discordEnabled }) {
+  const visibleIds = new Set();
+  const groups = roleGroups.length
+    ? roleGroups
+        .map((guild) => {
+          const rows = guild.roles
+            .map((role) => {
+              visibleIds.add(role.id);
+              const checked = selected.has(role.id);
+              const state = role.canMention ? (role.mentionable ? "mentionable" : "bot permission") : "not mentionable";
+              return `<label class="role-row ${role.canMention ? "" : "disabled"}">
+                <input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(role.id)}" ${checked ? "checked" : ""}>
+                <span class="role-dot" style="--role-color:${escapeHtml(role.color)}"></span>
+                <span class="role-name"><small>${escapeHtml(guild.name)}</small>@${escapeHtml(role.name)}</span>
+                <span class="role-state ${role.canMention ? "ok" : "bad"}">${escapeHtml(state)}</span>
+              </label>`;
+            })
+            .join("");
+
+          return `<div class="role-group">
+            <h4>${escapeHtml(guild.name)}</h4>
+            <div class="role-grid">${rows || '<p class="muted-text">No usable roles found.</p>'}</div>
+          </div>`;
+        })
+        .join("")
+    : `<p class="muted-text">${
+        discordEnabled
+          ? "Discord is connected, but no role cache is available yet. Refresh this page in a moment."
+          : "Discord token is missing, so roles cannot be loaded."
+      }</p>`;
+
+  const preserved = [...selected]
+    .filter((id) => !visibleIds.has(id))
+    .map(
+      (id) => `<label class="role-row disabled">
+        <input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(id)}" checked>
+        <span class="role-dot"></span>
+        <span class="role-name"><small>Configured</small>${escapeHtml(id)}</span>
+        <span class="role-state bad">not visible</span>
+      </label>`
+    )
+    .join("");
+
+  return `<div class="role-picker">
+    <div class="role-picker-title">
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(description)}</span>
+    </div>
+    <input type="hidden" name="${escapeHtml(name)}" value="">
+    ${groups}
+    ${preserved ? `<div class="role-group"><h4>Configured IDs</h4><div class="role-grid">${preserved}</div></div>` : ""}
+  </div>`;
+}
+
+function renderDiscordRoleSettings(settings, roleGroups, discordEnabled) {
+  const releaseSelected = selectedDiscordRoleIds(settings, "discordReleaseRoleIds", "discordReleaseRoleId");
+  const languageSelected = selectedDiscordRoleIds(settings, "discordLanguageRoleIds", "discordLanguageRoleId");
+  const missingSelected = selectedDiscordRoleIds(settings, "discordMissingTimeRoleIds", "discordMissingTimeRoleId");
+
+  return `<div class="span-2 role-settings">
+    <div>
+      <div class="field-label">Discord role mentions</div>
+      <p class="muted-text">Selected roles are pinged only in matching automatic release posts. Pick one role per server if the bot posts to multiple Discord servers.</p>
+    </div>
+    ${renderRolePicker({
+      name: "discordReleaseRoleIds",
+      title: "Timed main releases",
+      description: "Normal episodes with a known release time.",
+      selected: releaseSelected,
+      roleGroups,
+      discordEnabled
+    })}
+    ${renderRolePicker({
+      name: "discordLanguageRoleIds",
+      title: "Language releases",
+      description: "Dub or language-version posts with their own known time.",
+      selected: languageSelected,
+      roleGroups,
+      discordEnabled
+    })}
+    ${renderRolePicker({
+      name: "discordMissingTimeRoleIds",
+      title: "Time missing fallback",
+      description: "Posts that use the configured missing-time fallback.",
+      selected: missingSelected,
+      roleGroups,
+      discordEnabled
+    })}
+  </div>`;
+}
+
+function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups = []) {
   const enabledLanguages = new Set(normalizeEnabledLanguageCodes(settings.enabledLanguageCodes || ["de"]));
   const languageOptions = LANGUAGE_OPTIONS.map(
     (language) => `<label class="check language-option">
@@ -244,6 +344,7 @@ function renderSettings(settings, discordEnabled, channelGroups = []) {
     </div>
     <form class="grid-form" method="post" action="/settings">
       ${renderDiscordChannelSettings(settings, channelGroups, discordEnabled)}
+      ${renderDiscordRoleSettings(settings, roleGroups, discordEnabled)}
       <label>
         <span>Time zone</span>
         <input name="timeZone" value="${escapeHtml(settings.timeZone)}" placeholder="Europe/Berlin">
@@ -585,7 +686,7 @@ function renderFinishedPage(data, query) {
   );
 }
 
-function renderSettingsPage(data, discordEnabled, query, channelGroups = []) {
+function renderSettingsPage(data, discordEnabled, query, channelGroups = [], roleGroups = []) {
   return renderPage(
     "Settings",
     `${messageFromQuery(query)}
@@ -599,7 +700,7 @@ function renderSettingsPage(data, discordEnabled, query, channelGroups = []) {
       </div>
     </section>
     <div class="settings-layout">
-      ${renderSettings(data.settings, discordEnabled, channelGroups)}
+      ${renderSettings(data.settings, discordEnabled, channelGroups, roleGroups)}
       ${renderImportPanel()}
     </div>`
   );
@@ -863,11 +964,17 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
   app.get(
     "/settings",
     asyncRoute(async (req, res) => {
-      const channelGroups = await discord.listTextChannels().catch((error) => {
-        console.warn(`Could not load Discord channels: ${error.message}`);
-        return [];
-      });
-      res.send(renderSettingsPage(store.snapshot(), discord.enabled, req.query, channelGroups));
+      const [channelGroups, roleGroups] = await Promise.all([
+        discord.listTextChannels().catch((error) => {
+          console.warn(`Could not load Discord channels: ${error.message}`);
+          return [];
+        }),
+        discord.listMentionRoles().catch((error) => {
+          console.warn(`Could not load Discord roles: ${error.message}`);
+          return [];
+        })
+      ]);
+      res.send(renderSettingsPage(store.snapshot(), discord.enabled, req.query, channelGroups, roleGroups));
     })
   );
 
@@ -998,7 +1105,7 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
       if (!release) return res.redirect(`/series/${encodeURIComponent(existing.id)}?error=No release date could be calculated`);
       const message = buildAnnouncement(patch, release, store.getSettings());
       try {
-        await discord.post(message);
+        await discord.post(message, undefined, { mentionRoleIds: releaseMentionRoleIds(release, store.getSettings()) });
         await store.addPostLog({ type: "manual-test", seriesId: patch.id, title: patch.title, message });
         res.redirect(`/series/${encodeURIComponent(existing.id)}?ok=Test post sent`);
       } catch (error) {

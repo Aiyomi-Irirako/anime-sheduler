@@ -481,6 +481,124 @@ textarea:focus {
   color: var(--warn);
 }
 
+.role-settings {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 13px;
+  background: var(--surface-soft);
+}
+
+.role-picker {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface);
+}
+
+.role-picker-title {
+  display: grid;
+  gap: 2px;
+}
+
+.role-picker-title strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.role-picker-title span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.role-group {
+  display: grid;
+  gap: 7px;
+}
+
+.role-group h4 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.role-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 8px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.role-row.disabled {
+  opacity: 0.72;
+}
+
+.role-row input {
+  width: auto;
+  accent-color: var(--accent);
+}
+
+.role-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  background: var(--role-color, var(--accent));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--role-color, var(--accent)) 18%, transparent);
+}
+
+.role-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 780;
+}
+
+.role-name small {
+  display: inline-block;
+  min-width: 72px;
+  margin-right: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.role-state {
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.role-state.ok {
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+  color: var(--good);
+}
+
+.role-state.bad {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+}
+
 .muted-text {
   margin: 0;
   color: var(--muted);
@@ -921,6 +1039,7 @@ pre {
 
   .language-settings-grid,
   .channel-grid,
+  .role-grid,
   .language-track-row {
     grid-template-columns: 1fr;
   }

@@ -34,11 +34,18 @@ function normalizeDiscordChannelIds(value) {
   return ids;
 }
 
+function normalizeDiscordRoleIds(value) {
+  return normalizeDiscordChannelIds(value);
+}
+
 const DEFAULT_DATA = {
   settings: {
     timeZone: process.env.TIME_ZONE || DEFAULT_TIME_ZONE,
     discordChannelId: process.env.DISCORD_CHANNEL_ID || "",
     discordChannelIds: normalizeDiscordChannelIds(process.env.DISCORD_CHANNEL_ID),
+    discordReleaseRoleIds: normalizeDiscordRoleIds(process.env.DISCORD_RELEASE_ROLE_ID),
+    discordLanguageRoleIds: normalizeDiscordRoleIds(process.env.DISCORD_LANGUAGE_ROLE_ID),
+    discordMissingTimeRoleIds: normalizeDiscordRoleIds(process.env.DISCORD_MISSING_TIME_ROLE_ID),
     reminderMinutes: Number.parseInt(process.env.REMINDER_MINUTES || "0", 10),
     lookaheadDays: 14,
     schedulerIntervalSeconds: 60,
@@ -205,6 +212,21 @@ export class Store {
           : this.data.settings.discordChannelId || process.env.DISCORD_CHANNEL_ID
       );
       this.data.settings.discordChannelId = this.data.settings.discordChannelIds[0] || this.data.settings.discordChannelId || "";
+      this.data.settings.discordReleaseRoleIds = normalizeDiscordRoleIds(
+        this.data.settings.discordReleaseRoleIds?.length
+          ? this.data.settings.discordReleaseRoleIds
+          : this.data.settings.discordReleaseRoleId || process.env.DISCORD_RELEASE_ROLE_ID
+      );
+      this.data.settings.discordLanguageRoleIds = normalizeDiscordRoleIds(
+        this.data.settings.discordLanguageRoleIds?.length
+          ? this.data.settings.discordLanguageRoleIds
+          : this.data.settings.discordLanguageRoleId || process.env.DISCORD_LANGUAGE_ROLE_ID
+      );
+      this.data.settings.discordMissingTimeRoleIds = normalizeDiscordRoleIds(
+        this.data.settings.discordMissingTimeRoleIds?.length
+          ? this.data.settings.discordMissingTimeRoleIds
+          : this.data.settings.discordMissingTimeRoleId || process.env.DISCORD_MISSING_TIME_ROLE_ID
+      );
       this.data.series = Array.isArray(this.data.series) ? this.data.series.map((item) => normalizeSeries(item, item)) : [];
       this.data.posts = Array.isArray(this.data.posts) ? this.data.posts : [];
     } catch (error) {
@@ -236,6 +258,9 @@ export class Store {
       timeZone: cleanString(patch.timeZone) || this.data.settings.timeZone,
       discordChannelIds,
       discordChannelId: discordChannelIds[0] || "",
+      discordReleaseRoleIds: normalizeDiscordRoleIds(patch.discordReleaseRoleIds),
+      discordLanguageRoleIds: normalizeDiscordRoleIds(patch.discordLanguageRoleIds),
+      discordMissingTimeRoleIds: normalizeDiscordRoleIds(patch.discordMissingTimeRoleIds),
       reminderMinutes: Math.max(0, parseInteger(patch.reminderMinutes) ?? 0),
       lookaheadDays: Math.max(1, parseInteger(patch.lookaheadDays) ?? 14),
       schedulerIntervalSeconds: Math.max(30, parseInteger(patch.schedulerIntervalSeconds) ?? 60),

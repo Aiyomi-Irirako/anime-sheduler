@@ -8,7 +8,7 @@ import {
   releasePostKey,
   shouldPostRelease
 } from "./schedule.js";
-import { buildAnnouncement } from "./discordBot.js";
+import { buildAnnouncement, releaseMentionRoleIds } from "./discordBot.js";
 import { enabledLanguageTracks } from "./languages.js";
 import { cleanString } from "./utils.js";
 
@@ -52,7 +52,7 @@ export async function checkDueAnnouncements(store, discord) {
 
       const releaseAt = getReleasePostDateTime(release, settings);
       const message = buildAnnouncement(series, release, settings);
-      await discord.post(message);
+      await discord.post(message, undefined, { mentionRoleIds: releaseMentionRoleIds(release, settings) });
       if (dedupeKey) postedReleaseKeys.add(dedupeKey);
 
       const current = store.getSeries(series.id);

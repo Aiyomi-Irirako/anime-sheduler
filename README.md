@@ -4,7 +4,7 @@ A self-hosted Discord bot with a web panel for weekly anime and series release s
 
 Import CSV data, edit release times, track language-specific episode numbers, sync selected data from LiveChart, and post upcoming releases to Discord.
 
-Current version: `1.0.0`
+Current version: `1.1.0`
 
 ## Features
 
@@ -17,6 +17,7 @@ Current version: `1.0.0`
 - Daily LiveChart sync for active and finished series with a LiveChart schedule link
 - Automatic Discord announcements when an episode is due
 - Multiple Discord announcement channels across multiple servers
+- Optional Discord role mentions for timed main releases, language releases, and missing-time fallback posts
 - Manual "Upcoming Episodes" Discord summary
 - Discord slash commands: `/upcoming` for today/tomorrow and `/shedule day` for a selected weekday
 - Optional Basic Auth protection for the web panel
@@ -61,6 +62,7 @@ For manual installation:
 6. Select at least these bot permissions:
    - `View Channels`
    - `Send Messages`
+   - Optional: `Mention Everyone` if you want the bot to ping roles that are not normally mentionable
 7. Open the generated invite URL and invite the bot to your server.
 8. Enable Discord Developer Mode in your Discord client.
 9. Optional: copy your server ID to `DISCORD_GUILD_ID` if you want to limit initial slash-command registration.
@@ -84,6 +86,9 @@ DISCORD_TOKEN=your_bot_token_here
 DISCORD_CLIENT_ID=your_application_id_here
 DISCORD_GUILD_ID=your_server_id_here
 DISCORD_CHANNEL_ID=your_channel_id_here
+DISCORD_RELEASE_ROLE_ID=optional_release_role_id
+DISCORD_LANGUAGE_ROLE_ID=optional_language_role_id
+DISCORD_MISSING_TIME_ROLE_ID=optional_missing_time_role_id
 
 WEB_PORT=3000
 HOST_PORT=3000
@@ -102,6 +107,9 @@ Variable notes:
 - `DISCORD_CLIENT_ID`: Application ID. Required for the `/upcoming` slash command.
 - `DISCORD_GUILD_ID`: Optional comma-separated guild IDs. If empty, `/upcoming` is registered in all guilds the bot can see.
 - `DISCORD_CHANNEL_ID`: Optional fallback channel used before channels are selected in the web panel.
+- `DISCORD_RELEASE_ROLE_ID`: Optional initial role ping for timed main release posts. Roles can also be selected in the web panel.
+- `DISCORD_LANGUAGE_ROLE_ID`: Optional initial role ping for timed language-version posts.
+- `DISCORD_MISSING_TIME_ROLE_ID`: Optional initial role ping for missing-time fallback posts.
 - `WEB_PORT`: Port used by the Node app. Docker keeps this at `3000` internally.
 - `HOST_PORT`: Host port used by Docker Compose.
 - `WEB_USER`: Basic Auth user for the web panel.
@@ -387,6 +395,7 @@ For Docker, the web import is usually easier because you can paste the CSV direc
 - LiveChart language times: when LiveChart exposes a timestamp for a language version, the bot stores it as that language's next date and release time.
 - `Image URL`: optional poster/cover image used as a small Discord thumbnail. LiveChart sync can fill this automatically when available.
 - `Discord announcement channels`: select one or more text channels from any server the bot can access. Release posts are sent to every selected channel.
+- `Discord role mentions`: select roles for timed main releases, language releases, and missing-time fallback posts. If the bot posts to multiple servers, select the matching role in each server.
 - `Sync LiveChart now`: updates all active series that have a LiveChart link.
 - `Update from LiveChart once per day`: runs one slow daily sync at the configured hour.
 - `Continue weekly`: moves a manual `Next date` forward by 7 days after a post.
@@ -403,6 +412,8 @@ If `REMINDER_MINUTES=0`, the bot posts at release time.
 If `REMINDER_MINUTES=60`, the bot posts one hour before release time.
 
 If a release has no exact time, the bot posts it at `MISSING_TIME_POST_TIME`. The default is `18:00`.
+
+Automatic release posts and manual series test posts can ping selected Discord roles. Summary posts do not ping those roles.
 
 After an automatic post, only the release that was posted is advanced. Main episodes and language versions are tracked separately.
 
