@@ -1,8 +1,8 @@
 services:
-  series-bot:
+  anime-sheduler:
     build: .
-    image: discord-series-bot:local
-    container_name: discord-series-bot
+    image: anime-sheduler:local
+    container_name: anime-sheduler
     restart: unless-stopped
     env_file:
       - .env
@@ -12,7 +12,7 @@ services:
     ports:
       - "${HOST_PORT:-3000}:3000"
     volumes:
-      - series-bot-data:/app/data
+      - anime-sheduler-data:/app/data
 
 volumes:
-  series-bot-data:
+  anime-sheduler-data:

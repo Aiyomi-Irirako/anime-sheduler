@@ -12,7 +12,7 @@ import {
   parseBoolean,
   parseInteger
 } from "./utils.js";
-import { normalizeReleaseDay } from "./schedule.js";
+import { isSeriesComplete, normalizeReleaseDay } from "./schedule.js";
 import {
   normalizeEnabledLanguageCodes,
   normalizeLanguageTracks
@@ -68,6 +68,14 @@ function normalizeSeries(input, existing = {}) {
   const now = DateTime.now().toISO();
   const nextEpisode = parseInteger(input.nextEpisode);
   const episodeCount = parseInteger(input.episodeCount);
+  const existingEpisodeCount = parseInteger(existing.episodeCount);
+  const existingEpisodeCountUpdatedAt = cleanString(input.episodeCountUpdatedAt || existing.episodeCountUpdatedAt);
+  const episodeCountUpdatedAt =
+    episodeCount !== null && episodeCount !== existingEpisodeCount
+      ? now
+      : episodeCount !== null
+        ? existingEpisodeCountUpdatedAt || now
+        : "";
   const service = normalizeServiceList(input.service);
   const preferredService = normalizePreferredService(
     input.preferredService === undefined ? existing.preferredService : input.preferredService,
@@ -99,7 +107,7 @@ function normalizeSeries(input, existing = {}) {
   );
   const germanTrack = languageTracks.find((track) => track.code === "de");
 
-  return {
+  const normalized = {
     id: existing.id || input.id || createId(input.title),
     title: cleanString(input.title),
     service,
@@ -127,9 +135,15 @@ function normalizeSeries(input, existing = {}) {
     weekly: input.weekly === undefined ? true : parseBoolean(input.weekly),
     lastPostedKey: cleanString(input.lastPostedKey || existing.lastPostedKey),
     lastPostedAt: cleanString(input.lastPostedAt || existing.lastPostedAt),
+    episodeCountUpdatedAt,
+    finishedAt: cleanString(input.finishedAt || existing.finishedAt),
+    lastLiveChartCheckedAt: cleanString(input.lastLiveChartCheckedAt || existing.lastLiveChartCheckedAt),
     createdAt: existing.createdAt || input.createdAt || now,
     updatedAt: now
   };
+
+  normalized.finishedAt = isSeriesComplete(normalized) ? normalized.finishedAt || now : "";
+  return normalized;
 }
 
 function mergeImportedSeries(existing, incoming, options = {}) {

@@ -1,6 +1,7 @@
 import { DateTime } from "luxon";
 import { fetchLiveChartEpisodes } from "./livechart.js";
 import { mergeLanguageTracks, normalizeLanguageTracks } from "./languages.js";
+import { shouldDeleteFinishedSeries } from "./schedule.js";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -29,6 +30,10 @@ export function prepareLiveLanguageTracks(liveTracks = [], settings = {}) {
 
 function hasChanged(series, live) {
   if (Number.isFinite(live.nextEpisode) && live.nextEpisode !== series.nextEpisode) return true;
+  if (live.mainFinished && series.nextEpisode !== null) return true;
+  if (live.mainFinished && series.status !== "finished") return true;
+  if (Number.isFinite(live.episodeCount) && live.episodeCount !== series.episodeCount) return true;
+  if (live.service && !series.service) return true;
   if (Number.isFinite(live.dubNextEpisode) && live.dubNextEpisode !== series.dubNextEpisode) return true;
   if (Number.isFinite(live.dubNextEpisode) && !series.dubbed) return true;
   if (live.imageUrl && !series.imageUrl) return true;
@@ -60,14 +65,25 @@ export async function syncOneSeriesFromLiveChart(store, series) {
     liveLanguageTracks,
     settings.enabledLanguageCodes || []
   );
+  const nextEpisode = Number.isFinite(live.nextEpisode) ? live.nextEpisode : live.mainFinished ? null : series.nextEpisode;
+  const episodeCount = Number.isFinite(live.episodeCount) ? live.episodeCount : series.episodeCount;
+  const hasMainEpisode = Number.isFinite(nextEpisode);
+  const hasLanguageEpisode = languageTracks.some((track) => track.enabled && Number.isFinite(track.nextEpisode));
+  const completedAfterSync = (live.mainFinished || series.status === "finished") && !hasMainEpisode && !hasLanguageEpisode;
+  const reactivated = series.status === "finished" && !series.enabled && (hasMainEpisode || hasLanguageEpisode);
   const patch = {
     ...series,
-    nextEpisode: Number.isFinite(live.nextEpisode) ? live.nextEpisode : series.nextEpisode,
+    service: series.service || live.service,
+    status: live.mainFinished ? "finished" : reactivated && hasMainEpisode ? "airing" : series.status,
+    enabled: completedAfterSync ? false : reactivated ? true : series.enabled,
+    nextEpisode,
+    episodeCount,
     imageUrl: series.imageUrl || live.imageUrl,
-    languageTracks
+    languageTracks,
+    lastLiveChartCheckedAt: DateTime.now().toISO()
   };
 
-  if (!hasChanged(series, { ...live, languageTracks })) {
+  if (!hasChanged(series, { ...live, languageTracks }) && patch.status === series.status && patch.enabled === series.enabled) {
     return { changed: false, live };
   }
 
@@ -77,18 +93,22 @@ export async function syncOneSeriesFromLiveChart(store, series) {
 
 export async function syncAllLiveChart(store, options = {}) {
   const delayMs = options.delayMs ?? 6500;
+  const settings = store.getSettings();
   const seriesList = store
     .listSeries()
-    .filter((series) => series.enabled && isLiveChartLink(series.scheduleLink));
+    .filter((series) => isLiveChartLink(series.scheduleLink) && (series.enabled || series.status === "finished"));
 
   const result = {
     checked: 0,
     updated: 0,
+    deleted: 0,
     failed: 0,
     rateLimited: false,
     changes: [],
+    deletions: [],
     errors: []
   };
+  const failedIds = new Set();
 
   for (const series of seriesList) {
     result.checked += 1;
@@ -98,6 +118,9 @@ export async function syncAllLiveChart(store, options = {}) {
 
       const before = {
         nextEpisode: current.nextEpisode,
+        episodeCount: current.episodeCount,
+        status: current.status,
+        enabled: current.enabled,
         dubNextEpisode: current.dubNextEpisode,
         dubbed: current.dubbed,
         languageTracks: current.languageTracks || []
@@ -112,6 +135,9 @@ export async function syncAllLiveChart(store, options = {}) {
           before,
           after: {
             nextEpisode: synced.updated.nextEpisode,
+            episodeCount: synced.updated.episodeCount,
+            status: synced.updated.status,
+            enabled: synced.updated.enabled,
             dubNextEpisode: synced.updated.dubNextEpisode,
             dubbed: synced.updated.dubbed,
             imageUrl: synced.updated.imageUrl,
@@ -119,7 +145,9 @@ export async function syncAllLiveChart(store, options = {}) {
           }
         });
       }
+
     } catch (error) {
+      failedIds.add(series.id);
       result.failed += 1;
       result.errors.push({
         id: series.id,
@@ -135,7 +163,23 @@ export async function syncAllLiveChart(store, options = {}) {
     if (delayMs > 0) await sleep(delayMs);
   }
 
-  const summary = `${result.checked} checked, ${result.updated} updated, ${result.failed} failed${
+  if (!result.rateLimited) {
+    for (const series of [...store.listSeries()]) {
+      if (failedIds.has(series.id)) continue;
+      if (!shouldDeleteFinishedSeries(series, settings)) continue;
+
+      await store.deleteSeries(series.id);
+      result.deleted += 1;
+      result.deletions.push({
+        id: series.id,
+        title: series.title,
+        episodeCount: series.episodeCount,
+        episodeCountUpdatedAt: series.episodeCountUpdatedAt
+      });
+    }
+  }
+
+  const summary = `${result.checked} checked, ${result.updated} updated, ${result.deleted} deleted, ${result.failed} failed${
     result.rateLimited ? ", rate-limited" : ""
   }`;
   await store.markLiveChartSync({ summary });

@@ -1,8 +1,10 @@
-# Discord Series Bot
+# Anime Sheduler
 
 A self-hosted Discord bot with a web panel for weekly anime and series release schedules.
 
 Import CSV data, edit release times, track language-specific episode numbers, sync selected data from LiveChart, and post upcoming releases to Discord.
+
+Current version: `1.0.0`
 
 ## Features
 
@@ -12,7 +14,7 @@ Import CSV data, edit release times, track language-specific episode numbers, sy
 - Optional image URL per series for Discord release thumbnails
 - Multiple language versions per series, each with its own episode number
 - Separate Discord posts for language versions with their own date and time
-- Daily LiveChart sync for active series with a LiveChart schedule link
+- Daily LiveChart sync for active and finished series with a LiveChart schedule link
 - Automatic Discord announcements when an episode is due
 - Multiple Discord announcement channels across multiple servers
 - Manual "Upcoming Episodes" Discord summary
@@ -115,8 +117,8 @@ Docker Compose is the recommended production setup.
 ### 1. Clone the project
 
 ```bash
-git clone https://github.com/YOUR_NAME/discord-series-bot.git
-cd discord-series-bot
+git clone https://github.com/Aiyomi-Irirako/anime-sheduler.git
+cd anime-sheduler
 ```
 
 If you downloaded a ZIP instead, extract it and open the project folder.
@@ -188,7 +190,7 @@ docker compose up -d --build
 docker compose down
 ```
 
-Your data stays in the Docker volume `series-bot-data`.
+Your data stays in the Docker volume `anime-sheduler-data`.
 
 ## Reverse Proxy
 
@@ -199,7 +201,7 @@ Example Nginx config:
 ```nginx
 server {
     listen 80;
-    server_name series.example.com;
+    server_name anime.example.com;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -216,7 +218,7 @@ After your domain points to the server, you can add HTTPS with Certbot:
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d series.example.com
+sudo certbot --nginx -d anime.example.com
 ```
 
 Keep `WEB_PASSWORD` set when the web panel is reachable from the internet.
@@ -252,29 +254,29 @@ This is an optional manual deployment example. Docker users can skip it.
 Recommended layout:
 
 ```text
-/opt/discord-series-bot        app files
-/var/lib/discord-series-bot    database
-/etc/discord-series-bot.env    secrets and runtime config
+/opt/anime-sheduler        app files
+/var/lib/anime-sheduler    database
+/etc/anime-sheduler.env    secrets and runtime config
 ```
 
 Create a system user:
 
 ```bash
-sudo useradd --system --home /opt/discord-series-bot --shell /usr/sbin/nologin seriesbot
-sudo mkdir -p /opt/discord-series-bot /var/lib/discord-series-bot
-sudo chown -R seriesbot:seriesbot /opt/discord-series-bot /var/lib/discord-series-bot
+sudo useradd --system --home /opt/anime-sheduler --shell /usr/sbin/nologin animesheduler
+sudo mkdir -p /opt/anime-sheduler /var/lib/anime-sheduler
+sudo chown -R animesheduler:animesheduler /opt/anime-sheduler /var/lib/anime-sheduler
 ```
 
 Clone and install:
 
 ```bash
-sudo -u seriesbot git clone https://github.com/YOUR_NAME/discord-series-bot.git /opt/discord-series-bot
-cd /opt/discord-series-bot
+sudo -u animesheduler git clone https://github.com/Aiyomi-Irirako/anime-sheduler.git /opt/anime-sheduler
+cd /opt/anime-sheduler
 sudo corepack enable
-sudo -u seriesbot pnpm install --prod --frozen-lockfile
+sudo -u animesheduler pnpm install --prod --frozen-lockfile
 ```
 
-Create `/etc/discord-series-bot.env`:
+Create `/etc/anime-sheduler.env`:
 
 ```env
 DISCORD_TOKEN=your_bot_token_here
@@ -289,38 +291,38 @@ WEB_PASSWORD=change-this-password
 TIME_ZONE=Europe/Berlin
 REMINDER_MINUTES=0
 MISSING_TIME_POST_TIME=18:00
-DATA_FILE=/var/lib/discord-series-bot/db.json
+DATA_FILE=/var/lib/anime-sheduler/db.json
 ```
 
 Secure it:
 
 ```bash
-sudo chown root:seriesbot /etc/discord-series-bot.env
-sudo chmod 640 /etc/discord-series-bot.env
+sudo chown root:animesheduler /etc/anime-sheduler.env
+sudo chmod 640 /etc/anime-sheduler.env
 ```
 
-Create `/etc/systemd/system/discord-series-bot.service`:
+Create `/etc/systemd/system/anime-sheduler.service`:
 
 ```ini
 [Unit]
-Description=Discord Series Bot
+Description=Anime Sheduler
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=seriesbot
-Group=seriesbot
-WorkingDirectory=/opt/discord-series-bot
+User=animesheduler
+Group=animesheduler
+WorkingDirectory=/opt/anime-sheduler
 Environment=NODE_ENV=production
-EnvironmentFile=/etc/discord-series-bot.env
+EnvironmentFile=/etc/anime-sheduler.env
 ExecStart=/usr/bin/node src/index.js
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=/var/lib/discord-series-bot
+ReadWritePaths=/var/lib/anime-sheduler
 
 [Install]
 WantedBy=multi-user.target
@@ -330,23 +332,23 @@ Enable and start:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now discord-series-bot
-sudo systemctl status discord-series-bot
+sudo systemctl enable --now anime-sheduler
+sudo systemctl status anime-sheduler
 ```
 
 Logs:
 
 ```bash
-sudo journalctl -u discord-series-bot -f
+sudo journalctl -u anime-sheduler -f
 ```
 
 Update:
 
 ```bash
-cd /opt/discord-series-bot
-sudo -u seriesbot git pull
-sudo -u seriesbot pnpm install --prod --frozen-lockfile
-sudo systemctl restart discord-series-bot
+cd /opt/anime-sheduler
+sudo -u animesheduler git pull
+sudo -u animesheduler pnpm install --prod --frozen-lockfile
+sudo systemctl restart anime-sheduler
 ```
 
 ## CSV Import
@@ -367,8 +369,8 @@ pnpm run import -- /path/to/summer-2026.csv
 Docker CLI import:
 
 ```bash
-docker compose cp ./summer-2026.csv series-bot:/tmp/summer-2026.csv
-docker compose exec series-bot pnpm run import -- /tmp/summer-2026.csv
+docker compose cp ./summer-2026.csv anime-sheduler:/tmp/summer-2026.csv
+docker compose exec anime-sheduler pnpm run import -- /tmp/summer-2026.csv
 ```
 
 For Docker, the web import is usually easier because you can paste the CSV directly.
@@ -424,7 +426,7 @@ data/db.json
 or:
 
 ```text
-/var/lib/discord-series-bot/db.json
+/var/lib/anime-sheduler/db.json
 ```
 
 Docker path inside the container:
@@ -436,14 +438,14 @@ Docker path inside the container:
 Create a Docker backup:
 
 ```bash
-docker compose exec -T series-bot sh -c 'cat /app/data/db.json' > db-backup.json
+docker compose exec -T anime-sheduler sh -c 'cat /app/data/db.json' > db-backup.json
 ```
 
 Create a manual systemd backup:
 
 ```bash
-sudo cp /var/lib/discord-series-bot/db.json \
-  /var/lib/discord-series-bot/db-$(date +%F).json
+sudo cp /var/lib/anime-sheduler/db.json \
+  /var/lib/anime-sheduler/db-$(date +%F).json
 ```
 
 Back up `db.json` before large imports, server moves, or major updates.
@@ -462,8 +464,8 @@ docker compose logs -f
 Manual systemd:
 
 ```bash
-sudo systemctl status discord-series-bot
-sudo journalctl -u discord-series-bot -n 100
+sudo systemctl status anime-sheduler
+sudo journalctl -u anime-sheduler -n 100
 ```
 
 Health check:
@@ -498,7 +500,7 @@ curl http://127.0.0.1:3000/health
 
 ## Security Notes
 
-- Never commit `.env` or `/etc/discord-series-bot.env`.
+- Never commit `.env` or `/etc/anime-sheduler.env`.
 - Set `WEB_PASSWORD` before exposing the panel publicly.
 - Prefer HTTPS through a reverse proxy for public deployments.
 - Do not expose Docker or Node management ports publicly.

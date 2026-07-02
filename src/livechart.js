@@ -1,4 +1,5 @@
 import { languageLabel, normalizeLanguageCode } from "./languages.js";
+import { normalizeServiceName, normalizeServiceList } from "./services.js";
 
 function decodeHtml(value) {
   return String(value || "")
@@ -46,9 +47,31 @@ function parseLiveChartImage(html, baseUrl) {
   return poster.replace(/\/large\.(jpg|jpeg|png|webp)$/i, "/small.$1");
 }
 
+function pageText(html) {
+  return decodeHtml(
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+  ).replace(/\s+/g, " ").trim();
+}
+
+function parseLiveChartEpisodeCount(html) {
+  const text = pageText(html);
+  const match = text.match(/\bEpisodes\s+(?:\d+\s*\/\s*)?(\d{1,4})\b/i);
+  if (!match) return null;
+
+  const count = Number.parseInt(match[1], 10);
+  return Number.isFinite(count) && count > 0 ? count : null;
+}
+
 function articleTitle(article) {
   const match = article.match(/title="([^"]+)"/i);
   return decodeHtml(match?.[1] || "");
+}
+
+function articleText(article) {
+  return decodeHtml(article.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
 }
 
 function articleEpisode(article) {
@@ -87,6 +110,21 @@ function articleLanguageCodes(article) {
   return [...codes];
 }
 
+const SERVICE_PATTERNS = [
+  [/animation digital network|\bADN\b/i, "ADN"],
+  [/\bCrunchyroll\b/i, "Crunchyroll"],
+  [/\bNetflix\b/i, "Netflix"],
+  [/\bAmazon Prime Video\b|\bPrime Video\b/i, "Prime Video"],
+  [/\bYouTube\b/i, "YouTube"],
+  [/\bAniverse Channel\b|\bAniverse\b/i, "Aniverse"],
+  [/\bHIDIVE\b/i, "HIDIVE"],
+  [/\bDisney\+/i, "Disney+"],
+  [/\bHulu\b/i, "Hulu"],
+  [/\bBilibili\b/i, "Bilibili"],
+  [/\bApple TV\+/i, "Apple TV+"],
+  [/\bMax\b/i, "Max"]
+];
+
 const LIVECHART_PAST_GRACE_SECONDS = 5 * 60;
 
 function pickLowestTimestamp(items) {
@@ -107,28 +145,50 @@ function pickMainRelease(items, nowTimestamp) {
   return pickLowestTimestamp(subbed.length ? subbed : upcoming);
 }
 
+function articleServices(text) {
+  const services = [];
+  for (const [pattern, service] of SERVICE_PATTERNS) {
+    if (pattern.test(text)) services.push(normalizeServiceName(service));
+  }
+  return services;
+}
+
+function mergeServices(items) {
+  const services = [];
+  const seen = new Set();
+  for (const item of items) {
+    for (const service of item.services || []) {
+      const key = service.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      services.push(service);
+    }
+  }
+  return normalizeServiceList(services.join(","));
+}
+
 export function parseLiveChartEpisodes(html, options = {}) {
   const nowTimestamp = Number.isFinite(options.nowTimestamp)
     ? options.nowTimestamp
     : Math.floor(Date.now() / 1000);
   const articles = html.match(/<article\b[\s\S]*?<\/article>/gi) || [];
-  const parsed = articles
+  const rows = articles
     .map((article) => {
-      const episode = articleEpisode(article);
-      if (!episode) return null;
-
+      const text = articleText(article);
       const title = articleTitle(article);
-      const languageCodes = articleLanguageCodes(article);
       const isDub = /dubbed|dub/i.test(title);
       const isSubbed = /simulcast:\s*sub(?:bed|titled)|\bsub(?:bed|titled)\b/i.test(title);
       const isBroadcastJapan = /broadcast\s*\(japan\)/i.test(title);
       const isMain = isSubbed || isBroadcastJapan;
 
       return {
-        episode,
         title,
+        text,
+        episode: articleEpisode(article),
         timestamp: articleTimestamp(article),
-        languageCodes,
+        languageCodes: articleLanguageCodes(article),
+        services: articleServices(text),
+        isReleased: /\bReleased\b/i.test(text),
         isDub,
         isSubbed,
         isBroadcastJapan,
@@ -136,8 +196,12 @@ export function parseLiveChartEpisodes(html, options = {}) {
       };
     })
     .filter(Boolean);
+  const parsed = rows.filter((row) => Number.isFinite(row.episode));
 
   const main = pickMainRelease(parsed.filter((item) => item.isMain), nowTimestamp);
+  const mainRows = rows.filter((item) => item.isMain);
+  const hasUpcomingMain = upcomingItems(parsed.filter((item) => item.isMain), nowTimestamp).length > 0;
+  const mainFinished = !main && mainRows.some((item) => item.isReleased) && !hasUpcomingMain;
   const languageByCode = new Map();
 
   for (const item of upcomingItems(parsed.filter((entry) => entry.isDub), nowTimestamp)) {
@@ -165,22 +229,28 @@ export function parseLiveChartEpisodes(html, options = {}) {
   return {
     nextEpisode: main?.episode ?? null,
     dubNextEpisode: germanDub?.nextEpisode ?? null,
-    languageTracks
+    languageTracks,
+    service: mergeServices(rows.filter((item) => item.isMain || item.isDub)),
+    mainFinished
   };
 }
 
-async function fetchLiveChartImage(scheduleLink) {
+async function fetchLiveChartDetails(scheduleLink) {
   const animeUrl = liveChartAnimeUrl(scheduleLink);
-  if (!animeUrl) return "";
+  if (!animeUrl) return { imageUrl: "", episodeCount: null };
 
   const response = await fetch(animeUrl, {
     headers: {
       "user-agent": "Mozilla/5.0"
     }
   });
-  if (!response.ok) return "";
+  if (!response.ok) return { imageUrl: "", episodeCount: null };
 
-  return parseLiveChartImage(await response.text(), animeUrl);
+  const html = await response.text();
+  return {
+    imageUrl: parseLiveChartImage(html, animeUrl),
+    episodeCount: parseLiveChartEpisodeCount(html)
+  };
 }
 
 export async function fetchLiveChartEpisodes(scheduleLink) {
@@ -199,6 +269,6 @@ export async function fetchLiveChartEpisodes(scheduleLink) {
   }
 
   const live = parseLiveChartEpisodes(await response.text());
-  const imageUrl = await fetchLiveChartImage(scheduleLink).catch(() => "");
-  return { ...live, imageUrl };
+  const details = await fetchLiveChartDetails(scheduleLink).catch(() => ({ imageUrl: "", episodeCount: null }));
+  return { ...live, ...details };
 }
