@@ -265,10 +265,13 @@ export function listReleasesForWeekday(seriesList, settings, weekdayKey, base = 
   const day = WEEKDAY_BY_KEY.get(normalizeReleaseDay(weekdayKey));
   if (!day) return [];
 
+  const daysUntil = (day.luxon - now.weekday + 7) % 7;
+  const targetDate = now.startOf("day").plus({ days: daysUntil }).toISODate();
+
   return allCalculatedReleases(seriesList, settings, now)
     .filter(({ release }) => {
       const releaseAt = releaseSortTime(release)?.setZone(zone);
-      return releaseAt?.isValid && releaseAt >= now.startOf("day") && releaseAt.weekday === day.luxon;
+      return releaseAt?.isValid && releaseAt.toISODate() === targetDate;
     })
     .sort((a, b) => releaseSortTime(a.release).toMillis() - releaseSortTime(b.release).toMillis());
 }
