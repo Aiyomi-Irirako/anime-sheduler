@@ -1,0 +1,18 @@
+services:
+  series-bot:
+    build: .
+    image: discord-series-bot:local
+    container_name: discord-series-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      WEB_PORT: 3000
+      DATA_FILE: /app/data/db.json
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    volumes:
+      - series-bot-data:/app/data
+
+volumes:
+  series-bot-data:

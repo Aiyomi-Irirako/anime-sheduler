@@ -1,0 +1,23 @@
+{
+  "name": "discord-series-bot",
+  "version": "1.0.0",
+  "description": "Discord bot with a small web panel for weekly anime/series release schedules imported from CSV.",
+  "type": "module",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "import": "node src/cli-import.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "csv-parse": "^5.5.6",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "luxon": "^3.5.0"
+  }
+}
