@@ -68,6 +68,17 @@ function messagePayload(content) {
   };
 }
 
+function mentionUserPayload(content, userId) {
+  const payload = messagePayload(content);
+  const mention = `<@${userId}>`;
+
+  return {
+    ...payload,
+    content: payload.content ? `${mention}\n${payload.content}`.slice(0, 2000) : mention,
+    allowedMentions: { users: [userId] }
+  };
+}
+
 function releaseTitle(series, release) {
   const entry = formatEpisodeEntries(series, release).find((item) => ["main", "language"].includes(item.kind));
   return entry ? `${series.title} - ${entry.text}` : series.title;
@@ -306,7 +317,7 @@ export class DiscordService {
         const day = normalizeReleaseDay(interaction.options.getString("day", true));
         const releases = listReleasesForWeekday(data.series, data.settings, day);
         const message = buildWeekdayScheduleSummary(releases, data.settings, day);
-        await interaction.reply(messagePayload(message));
+        await interaction.reply(mentionUserPayload(message, interaction.user.id));
       }
     });
 
