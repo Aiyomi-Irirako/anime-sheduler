@@ -259,6 +259,20 @@ export function listUpcomingTodayTomorrow(seriesList, settings, base = DateTime.
     .sort((a, b) => releaseSortTime(a.release).toMillis() - releaseSortTime(b.release).toMillis());
 }
 
+export function listReleasesForWeekday(seriesList, settings, weekdayKey, base = DateTime.now()) {
+  const zone = settings.timeZone || "Europe/Berlin";
+  const now = base.setZone(zone);
+  const day = WEEKDAY_BY_KEY.get(normalizeReleaseDay(weekdayKey));
+  if (!day) return [];
+
+  return allCalculatedReleases(seriesList, settings, now)
+    .filter(({ release }) => {
+      const releaseAt = releaseSortTime(release)?.setZone(zone);
+      return releaseAt?.isValid && releaseAt >= now.startOf("day") && releaseAt.weekday === day.luxon;
+    })
+    .sort((a, b) => releaseSortTime(a.release).toMillis() - releaseSortTime(b.release).toMillis());
+}
+
 export function formatReleaseDate(release, settings, includeWeekday = true) {
   if (!release) return "No release date";
   const localeDate = release.dateTime || release.date;

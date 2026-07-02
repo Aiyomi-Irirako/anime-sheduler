@@ -18,6 +18,7 @@ Current version: `1.0.0`
 - Automatic Discord announcements when an episode is due
 - Multiple Discord announcement channels across multiple servers
 - Manual "Upcoming Episodes" Discord summary
+- Discord slash commands: `/upcoming` for today/tomorrow and `/shedule day` for a selected weekday
 - Optional Basic Auth protection for the web panel
 - JSON data store, easy to back up and move between hosts
 - Docker Compose support for simple self-hosting
