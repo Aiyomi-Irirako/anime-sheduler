@@ -609,9 +609,40 @@ button.secondary:hover {
   list-style: none;
 }
 
+.upcoming-days {
+  display: grid;
+  gap: 18px;
+}
+
+.upcoming-day {
+  display: grid;
+  gap: 10px;
+}
+
+.upcoming-day-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+}
+
+.upcoming-day-header h3 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.upcoming-day-header span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 750;
+}
+
 .upcoming-list li {
   display: grid;
-  grid-template-columns: minmax(190px, 250px) minmax(0, 1fr) minmax(100px, 160px);
+  grid-template-columns: minmax(92px, 130px) minmax(0, 1fr) minmax(100px, 160px);
   gap: 12px;
   align-items: center;
   border-top: 1px solid var(--line);
@@ -621,6 +652,10 @@ button.secondary:hover {
 .upcoming-list li:first-child {
   border-top: 0;
   padding-top: 0;
+}
+
+.upcoming-list li.empty {
+  display: block;
 }
 
 .date-stack {

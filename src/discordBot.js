@@ -9,11 +9,16 @@ import {
   Routes,
   SlashCommandBuilder
 } from "discord.js";
+import { DateTime } from "luxon";
 import {
-  listUpcoming,
+  getReleaseDayLabel,
+  listReleasesForWeekday,
+  listUpcomingTodayTomorrow,
   formatEpisodeEntries,
-  getMissingTimePostTime
+  getMissingTimePostTime,
+  normalizeReleaseDay
 } from "./schedule.js";
+import { WEEKDAYS } from "./constants.js";
 import { cleanString, normalizeHttpUrl } from "./utils.js";
 import { pickPreferredService } from "./services.js";
 
@@ -60,6 +65,17 @@ function messagePayload(content) {
   return {
     ...content,
     allowedMentions: content.allowedMentions || { parse: [] }
+  };
+}
+
+function mentionUserPayload(content, userId) {
+  const payload = messagePayload(content);
+  const mention = `<@${userId}>`;
+
+  return {
+    ...payload,
+    content: payload.content ? `${mention}\n${payload.content}`.slice(0, 2000) : mention,
+    allowedMentions: { users: [userId] }
   };
 }
 
@@ -147,7 +163,21 @@ export function buildAnnouncement(series, release, settings) {
   return { embeds: [embed], allowedMentions: { parse: [] } };
 }
 
-function summaryDateLabel(release, settings) {
+function summaryDateLabel(release, settings, base = DateTime.now()) {
+  const value = release?.dateTime || release?.date;
+  if (!value) return "No release date";
+
+  const date = value.setZone(settings.timeZone || "Europe/Berlin").setLocale("en");
+  if (!date.isValid) return "No release date";
+
+  const zone = settings.timeZone || "Europe/Berlin";
+  const now = base.setZone(zone);
+  const key = date.toISODate();
+  const prefix = key === now.toISODate() ? "Today" : key === now.plus({ days: 1 }).toISODate() ? "Tomorrow" : date.toFormat("cccc");
+  return `${prefix} - ${date.toFormat("cccc, dd LLL yyyy")}`;
+}
+
+function calendarDateLabel(release, settings) {
   const value = release?.dateTime || release?.date;
   if (!value) return "No release date";
 
@@ -177,15 +207,15 @@ function summaryLine(series, release, settings) {
   const time = escapeMarkdown(summaryTimeLabel(release, settings));
   const episode = escapeMarkdown(summaryEpisodeLabel(series, release) || "Next episode");
   const service = pickPreferredService(series.service, series.preferredService);
-  const serviceText = service ? ` · ${escapeMarkdown(service)}` : "";
+  const serviceText = service ? ` - ${escapeMarkdown(service)}` : "";
 
-  return `• \`${time}\` **${title}**\n  ${episode}${serviceText}`;
+  return `- \`${time}\` **${title}**\n  ${episode}${serviceText}`;
 }
 
-function groupedSummaryFields(items, settings) {
+function groupedSummaryFields(items, settings, base = DateTime.now(), labeler = summaryDateLabel) {
   const groups = new Map();
   for (const { series, release } of items) {
-    const label = summaryDateLabel(release, settings);
+    const label = labeler(release, settings, base);
     if (!groups.has(label)) groups.set(label, []);
     groups.get(label).push(summaryLine(series, release, settings));
   }
@@ -212,17 +242,37 @@ function groupedSummaryFields(items, settings) {
 
 export function buildUpcomingSummary(items, settings, limit = 12) {
   const visible = items.slice(0, limit);
-  if (!visible.length) return "No upcoming episodes found.";
+  if (!visible.length) return "No releases today or tomorrow.";
 
   const hiddenCount = Math.max(0, items.length - visible.length);
   const description = hiddenCount
-    ? `Showing the next ${visible.length} releases. ${hiddenCount} more are in the current lookahead window.`
-    : `Showing the next ${visible.length} releases in the current lookahead window.`;
+    ? `Showing ${visible.length} of ${items.length} releases for today and tomorrow.`
+    : `Showing ${visible.length} releases for today and tomorrow.`;
   const embed = new EmbedBuilder()
     .setColor(0x8bb4ff)
     .setTitle("Upcoming Episodes")
     .setDescription(description)
     .addFields(groupedSummaryFields(visible, settings))
+    .setTimestamp(new Date());
+
+  return { embeds: [embed], allowedMentions: { parse: [] } };
+}
+
+export function buildWeekdayScheduleSummary(items, settings, weekdayKey, limit = 50) {
+  const dayKey = normalizeReleaseDay(weekdayKey);
+  const dayLabel = getReleaseDayLabel(dayKey) || "Selected day";
+  const visible = items.slice(0, limit);
+  if (!visible.length) return `No releases found for ${dayLabel}.`;
+
+  const hiddenCount = Math.max(0, items.length - visible.length);
+  const description = hiddenCount
+    ? `Showing ${visible.length} of ${items.length} releases scheduled for ${dayLabel}.`
+    : `Showing ${visible.length} releases scheduled for ${dayLabel}.`;
+  const embed = new EmbedBuilder()
+    .setColor(0x8bb4ff)
+    .setTitle(`${dayLabel} Releases`)
+    .setDescription(description)
+    .addFields(groupedSummaryFields(visible, settings, DateTime.now(), calendarDateLabel))
     .setTimestamp(new Date());
 
   return { embeds: [embed], allowedMentions: { parse: [] } };
@@ -254,12 +304,21 @@ export class DiscordService {
 
     this.client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.isChatInputCommand()) return;
-      if (!["upcoming", "naechste"].includes(interaction.commandName)) return;
 
       const data = this.store.snapshot();
-      const upcoming = listUpcoming(data.series, data.settings, data.settings.lookaheadDays);
-      const message = buildUpcomingSummary(upcoming, data.settings, data.settings.summaryLimit);
-      await interaction.reply(messagePayload(message));
+      if (["upcoming", "naechste"].includes(interaction.commandName)) {
+        const upcoming = listUpcomingTodayTomorrow(data.series, data.settings);
+        const message = buildUpcomingSummary(upcoming, data.settings, data.settings.summaryLimit);
+        await interaction.reply(messagePayload(message));
+        return;
+      }
+
+      if (interaction.commandName === "shedule") {
+        const day = normalizeReleaseDay(interaction.options.getString("day", true));
+        const releases = listReleasesForWeekday(data.series, data.settings, day);
+        const message = buildWeekdayScheduleSummary(releases, data.settings, day);
+        await interaction.reply(mentionUserPayload(message, interaction.user.id));
+      }
     });
 
     await this.client.login(process.env.DISCORD_TOKEN);
@@ -273,6 +332,17 @@ export class DiscordService {
       new SlashCommandBuilder()
         .setName("upcoming")
         .setDescription("Shows upcoming series episodes from the web panel.")
+        .toJSON(),
+      new SlashCommandBuilder()
+        .setName("shedule")
+        .setDescription("Shows releases for a selected weekday.")
+        .addStringOption((option) =>
+          option
+            .setName("day")
+            .setDescription("Weekday to show.")
+            .setRequired(true)
+            .addChoices(...WEEKDAYS.map((day) => ({ name: day.label, value: day.key })))
+        )
         .toJSON()
     ];
 
@@ -284,7 +354,7 @@ export class DiscordService {
       await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
     }
 
-    console.log(`Discord slash command /upcoming registered in ${guildIds.length} guild(s).`);
+    console.log(`Discord slash commands registered in ${guildIds.length} guild(s).`);
   }
 
   async listTextChannels() {

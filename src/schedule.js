@@ -232,6 +232,50 @@ export function listUpcoming(seriesList, settings, days = 14, base = DateTime.no
     });
 }
 
+function releaseSortTime(release) {
+  return release.dateTime || release.date;
+}
+
+function allCalculatedReleases(seriesList, settings, base = DateTime.now()) {
+  return seriesList
+    .flatMap((series) => [
+      { series, release: getNextRelease(series, settings, base) },
+      ...enabledLanguageTracks(series).map((track) => ({ series, track, release: getNextLanguageRelease(series, track, settings, base) }))
+    ])
+    .filter(({ release }) => release);
+}
+
+export function listUpcomingTodayTomorrow(seriesList, settings, base = DateTime.now()) {
+  const zone = settings.timeZone || "Europe/Berlin";
+  const now = base.setZone(zone);
+  const today = now.toISODate();
+  const tomorrow = now.plus({ days: 1 }).toISODate();
+
+  return allCalculatedReleases(seriesList, settings, now)
+    .filter(({ release }) => {
+      const date = releaseSortTime(release)?.setZone(zone).toISODate();
+      return date === today || date === tomorrow;
+    })
+    .sort((a, b) => releaseSortTime(a.release).toMillis() - releaseSortTime(b.release).toMillis());
+}
+
+export function listReleasesForWeekday(seriesList, settings, weekdayKey, base = DateTime.now()) {
+  const zone = settings.timeZone || "Europe/Berlin";
+  const now = base.setZone(zone);
+  const day = WEEKDAY_BY_KEY.get(normalizeReleaseDay(weekdayKey));
+  if (!day) return [];
+
+  const daysUntil = (day.luxon - now.weekday + 7) % 7;
+  const targetDate = now.startOf("day").plus({ days: daysUntil }).toISODate();
+
+  return allCalculatedReleases(seriesList, settings, now)
+    .filter(({ release }) => {
+      const releaseAt = releaseSortTime(release)?.setZone(zone);
+      return releaseAt?.isValid && releaseAt.toISODate() === targetDate;
+    })
+    .sort((a, b) => releaseSortTime(a.release).toMillis() - releaseSortTime(b.release).toMillis());
+}
+
 export function formatReleaseDate(release, settings, includeWeekday = true) {
   if (!release) return "No release date";
   const localeDate = release.dateTime || release.date;
