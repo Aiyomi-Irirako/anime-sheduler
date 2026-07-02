@@ -2,16 +2,17 @@ import express from "express";
 import path from "node:path";
 import { DateTime } from "luxon";
 import { buildAnnouncement, buildUpcomingSummary } from "./discordBot.js";
-import { STATUS_OPTIONS, WEEKDAYS } from "./constants.js";
+import { APP_NAME, APP_VERSION, STATUS_OPTIONS, WEEKDAYS } from "./constants.js";
 import {
   getNextRelease,
+  getFinishedDeletionDate,
   listUpcoming,
   formatReleaseDate,
   getReleaseDayLabel,
-  formatEpisodeEntries
+  formatEpisodeEntries,
+  isSeriesComplete
 } from "./schedule.js";
-import { fetchLiveChartEpisodes } from "./livechart.js";
-import { prepareLiveLanguageTracks, syncAllLiveChart } from "./livechartSync.js";
+import { syncAllLiveChart, syncOneSeriesFromLiveChart } from "./livechartSync.js";
 import { cleanString, escapeHtml, parseInteger, toFormBoolean } from "./utils.js";
 import {
   LANGUAGE_OPTIONS,
@@ -19,8 +20,7 @@ import {
   languageShortLabel,
   normalizeEnabledLanguageCodes,
   normalizeLanguageCode,
-  normalizeLanguageTracks,
-  mergeLanguageTracks
+  normalizeLanguageTracks
 } from "./languages.js";
 import { normalizePreferredService, pickPreferredService, serviceStyle, splitServiceNames } from "./services.js";
 
@@ -34,7 +34,7 @@ function requireBasicAuth(req, res, next) {
   const header = req.headers.authorization || "";
   const [scheme, encoded] = header.split(" ");
   if (scheme !== "Basic" || !encoded) {
-    res.setHeader("WWW-Authenticate", 'Basic realm="Series Bot"');
+    res.setHeader("WWW-Authenticate", `Basic realm="${APP_NAME}"`);
     return res.status(401).send("Authentication required");
   }
 
@@ -44,7 +44,7 @@ function requireBasicAuth(req, res, next) {
   const givenPassword = decoded.slice(separator + 1);
 
   if (user !== expectedUser || givenPassword !== password) {
-    res.setHeader("WWW-Authenticate", 'Basic realm="Series Bot"');
+    res.setHeader("WWW-Authenticate", `Basic realm="${APP_NAME}"`);
     return res.status(401).send("Authentication required");
   }
 
@@ -75,11 +75,12 @@ function renderPage(title, content) {
 <body>
   <header class="topbar">
     <div class="brand-block">
-      <a class="brand" href="/">Series Bot</a>
-      <span>Release Panel</span>
+      <a class="brand" href="/">${escapeHtml(APP_NAME)}</a>
+      <span class="app-version">v${escapeHtml(APP_VERSION)}</span>
     </div>
     <nav class="nav-links">
       <a href="/">Dashboard</a>
+      <a href="/finished">Finished</a>
       <a href="/series/new">New Series</a>
       <a href="/settings">Settings</a>
       <a href="/api/upcoming">API</a>
@@ -397,7 +398,7 @@ function renderUpcoming(upcoming, settings, discordEnabled) {
   </section>`;
 }
 
-function renderSeriesTable(seriesList, settings) {
+function renderSeriesTable(seriesList, settings, emptyText = "No series imported yet.") {
   const renderEpisodeStack = (series, release) =>
     `<div class="episode-stack compact">${formatEpisodeEntries(series, release)
       .map((entry) => `<span class="episode-line ${escapeHtml(entry.kind)}">${escapeHtml(entry.text)}</span>`)
@@ -445,7 +446,7 @@ function renderSeriesTable(seriesList, settings) {
             <th></th>
           </tr>
         </thead>
-        <tbody>${rows || '<tr><td colspan="8">No series imported yet.</td></tr>'}</tbody>
+        <tbody>${rows || `<tr><td colspan="8">${escapeHtml(emptyText)}</td></tr>`}</tbody>
       </table>
     </div>
     <script>
@@ -463,15 +464,99 @@ function renderSeriesTable(seriesList, settings) {
 
 function renderDashboard(data, discordEnabled, query) {
   const upcoming = listUpcoming(data.series, data.settings, data.settings.lookaheadDays);
+  const dashboardSeries = data.series.filter((series) => !isSeriesComplete(series));
   return renderPage(
-    "Series Bot",
+    APP_NAME,
     `${messageFromQuery(query)}
     ${renderHero(data, discordEnabled)}
     ${renderStats(data, upcoming)}
     <div class="main-column">
       ${renderUpcoming(upcoming, data.settings, discordEnabled)}
-      ${renderSeriesTable(data.series, data.settings)}
+      ${renderSeriesTable(dashboardSeries, data.settings, "No active or pending series. Finished entries are in the Finished tab.")}
     </div>`
+  );
+}
+
+function formatLifecycleDate(value, settings, fallback = "Not set") {
+  const text = cleanString(value);
+  if (!text) return fallback;
+
+  const date = DateTime.fromISO(text, { zone: settings.timeZone || "Europe/Berlin" });
+  if (!date.isValid) return fallback;
+  return date.setLocale("en").toFormat("dd LLL yyyy HH:mm");
+}
+
+function renderFinishedPage(data, query) {
+  const now = DateTime.now().setZone(data.settings.timeZone || "Europe/Berlin");
+  const finished = data.series
+    .filter((series) => isSeriesComplete(series))
+    .sort((a, b) => cleanString(b.finishedAt || b.updatedAt).localeCompare(cleanString(a.finishedAt || a.updatedAt)));
+
+  const rows = finished
+    .map((series) => {
+      const deletionDate = getFinishedDeletionDate(series, data.settings);
+      const isDue = deletionDate && now >= deletionDate;
+      const cleanup = deletionDate
+        ? deletionDate.setLocale("en").toFormat("dd LLL yyyy HH:mm")
+        : "Waiting for total episodes";
+      const totalUpdated = Number.isFinite(series.episodeCount)
+        ? formatLifecycleDate(series.episodeCountUpdatedAt, data.settings)
+        : "No total count";
+      return `<tr>
+        <td><a class="title-link" href="/series/${escapeHtml(series.id)}">${escapeHtml(series.title)}</a></td>
+        <td>${renderServiceBadges(series.service, series.preferredService)}</td>
+        <td>${Number.isFinite(series.episodeCount) ? escapeHtml(series.episodeCount) : "-"}</td>
+        <td>${escapeHtml(formatLifecycleDate(series.finishedAt, data.settings))}</td>
+        <td>${escapeHtml(totalUpdated)}</td>
+        <td>
+          <span class="pill ${isDue ? "warn" : "off"}">${escapeHtml(isDue ? "Due on next sync" : cleanup)}</span>
+        </td>
+        <td><a class="button secondary" href="/series/${escapeHtml(series.id)}">Edit</a></td>
+      </tr>`;
+    })
+    .join("");
+
+  return renderPage(
+    "Finished Series",
+    `${messageFromQuery(query)}
+    <section class="hero-panel">
+      <div>
+        <p class="eyebrow">Archive</p>
+        <h1>Finished Series</h1>
+      </div>
+      <div class="hero-meta">
+        <span>${finished.length} finished</span>
+        <span>Auto-delete after 1 month of stable totals</span>
+      </div>
+    </section>
+    <section class="panel wide">
+      <div class="section-title split">
+        <div>
+          <h2>Finished Entries</h2>
+          <p>Entries stay checked during LiveChart sync and are removed after the total episode count has been stable for one month. Specials without a total count use the finished date.</p>
+        </div>
+        <form method="post" action="/sync-livechart-all">
+          <input type="hidden" name="returnTo" value="/finished">
+          <button type="submit" class="button secondary">Sync LiveChart now</button>
+        </form>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Service</th>
+              <th>Total</th>
+              <th>Finished</th>
+              <th>Total updated</th>
+              <th>Cleanup</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${rows || '<tr><td colspan="7">No finished series yet.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>`
   );
 }
 
@@ -554,6 +639,28 @@ function renderLanguageTrackSettings(series) {
     </div>
     <div class="language-track-grid">${rows}</div>
   </div>`;
+}
+
+function renderSeriesLifecyclePanel(series, settings) {
+  if (!isSeriesComplete(series)) return "";
+
+  const deletionDate = getFinishedDeletionDate(series, settings);
+  const basis = Number.isFinite(series.episodeCount)
+    ? `Total episode count last changed: ${formatLifecycleDate(series.episodeCountUpdatedAt, settings)}`
+    : `No total episode count on LiveChart. Timer uses finished date: ${formatLifecycleDate(series.finishedAt, settings)}`;
+  const cleanup = deletionDate
+    ? deletionDate.setLocale("en").toFormat("dd LLL yyyy HH:mm")
+    : "Waiting for lifecycle data";
+
+  return `<section class="panel lifecycle-panel">
+    <div class="section-title split">
+      <div>
+        <h2>Finished Lifecycle</h2>
+        <p>${escapeHtml(basis)}</p>
+      </div>
+      <span class="pill off">Auto-delete: ${escapeHtml(cleanup)}</span>
+    </div>
+  </section>`;
 }
 
 function renderSeriesForm(series, settings, query, isNew = false, discordEnabled = true) {
@@ -649,6 +756,7 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
         </div>
       </form>
     </section>
+    ${isNew ? "" : renderSeriesLifecyclePanel(series, settings)}
     ${
       isNew
         ? ""
@@ -721,6 +829,13 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
   );
 
   app.get(
+    "/finished",
+    asyncRoute(async (req, res) => {
+      res.send(renderFinishedPage(store.snapshot(), req.query));
+    })
+  );
+
+  app.get(
     "/settings",
     asyncRoute(async (req, res) => {
       const channelGroups = await discord.listTextChannels().catch((error) => {
@@ -764,7 +879,10 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
       const message = buildUpcomingSummary(upcoming, data.settings, data.settings.summaryLimit);
       try {
         await discord.post(message);
-        await store.addPostLog({ type: "manual-summary", message });
+        await store.addPostLog({
+          type: "manual-summary",
+          message: typeof message === "string" ? message : `Upcoming Episodes summary (${upcoming.length} item(s))`
+        });
         res.redirect("/?ok=Summary posted");
       } catch (error) {
         res.redirect(`/?error=${encodeURIComponent(error.message)}`);
@@ -775,11 +893,12 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
   app.post(
     "/sync-livechart-all",
     asyncRoute(async (req, res) => {
+      const returnTo = cleanString(req.body.returnTo) === "/finished" ? "/finished" : "/settings";
       try {
         const result = await syncAllLiveChart(store);
-        res.redirect(`/settings?ok=${encodeURIComponent(`LiveChart sync: ${result.summary}`)}`);
+        res.redirect(`${returnTo}?ok=${encodeURIComponent(`LiveChart sync: ${result.summary}`)}`);
       } catch (error) {
-        res.redirect(`/settings?error=${encodeURIComponent(error.message)}`);
+        res.redirect(`${returnTo}?error=${encodeURIComponent(error.message)}`);
       }
     })
   );
@@ -871,18 +990,10 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
 
       const patch = { ...existing, ...formToSeries(req.body, existing.id) };
       try {
-        const live = await fetchLiveChartEpisodes(patch.scheduleLink);
-        const liveLanguageTracks = prepareLiveLanguageTracks(live.languageTracks || [], store.getSettings());
-        const updated = await store.upsertSeries({
-          ...patch,
-          nextEpisode: live.nextEpisode ?? patch.nextEpisode,
-          imageUrl: patch.imageUrl || live.imageUrl,
-          languageTracks: mergeLanguageTracks(
-            patch.languageTracks || [],
-            liveLanguageTracks,
-            store.getSettings().enabledLanguageCodes || []
-          )
-        });
+        const saved = await store.upsertSeries(patch);
+        const synced = await syncOneSeriesFromLiveChart(store, saved);
+        const updated = synced.updated || store.getSeries(saved.id) || saved;
+        const live = synced.live;
         const parts = [];
         if (Number.isFinite(live.nextEpisode)) parts.push(`Episode ${live.nextEpisode}`);
         for (const track of live.languageTracks || []) {

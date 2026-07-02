@@ -7,6 +7,7 @@ import { pickPreferredService } from "./services.js";
 const WEEKDAY_BY_KEY = new Map(WEEKDAYS.map((day) => [day.key, day]));
 const WEEKDAY_BY_LABEL = new Map(WEEKDAYS.map((day) => [day.label.toLowerCase(), day]));
 const DEFAULT_MISSING_TIME_POST_TIME = "18:00";
+const FINISHED_SERIES_RETENTION_MONTHS = 1;
 
 export function normalizeReleaseDay(value) {
   const text = cleanString(value).toLowerCase();
@@ -39,6 +40,40 @@ export function getReleaseDayLabel(key, locale = "en") {
   const day = WEEKDAY_BY_KEY.get(normalizeReleaseDay(key));
   if (!day) return "";
   return locale === "de" ? day.de : day.label;
+}
+
+export function hasPendingMainRelease(series) {
+  return Number.isFinite(series?.nextEpisode);
+}
+
+export function hasPendingLanguageRelease(series) {
+  return (series?.languageTracks || []).some((track) => track.enabled && Number.isFinite(track.nextEpisode));
+}
+
+export function isSeriesComplete(series) {
+  return cleanString(series?.status).toLowerCase() === "finished" && !hasPendingMainRelease(series) && !hasPendingLanguageRelease(series);
+}
+
+export function getFinishedDeletionDate(series, settings = {}) {
+  if (!isSeriesComplete(series)) return null;
+
+  const zone = settings.timeZone || "Europe/Berlin";
+  const referenceAt = Number.isFinite(series?.episodeCount)
+    ? cleanString(series.episodeCountUpdatedAt)
+    : cleanString(series.finishedAt || series.lastLiveChartCheckedAt || series.updatedAt || series.createdAt);
+  if (!referenceAt) return null;
+
+  const since = DateTime.fromISO(referenceAt, { zone });
+  if (!since.isValid) return null;
+  return since.setZone(zone).plus({ months: FINISHED_SERIES_RETENTION_MONTHS });
+}
+
+export function shouldDeleteFinishedSeries(series, settings = {}, base = DateTime.now()) {
+  const deletionDate = getFinishedDeletionDate(series, settings);
+  if (!deletionDate) return false;
+
+  const zone = settings.timeZone || "Europe/Berlin";
+  return base.setZone(zone) >= deletionDate;
 }
 
 export function parseTimeParts(value) {

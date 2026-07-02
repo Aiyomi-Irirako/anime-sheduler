@@ -101,6 +101,10 @@ a:hover {
   text-transform: uppercase;
 }
 
+.app-version {
+  text-transform: none;
+}
+
 .nav-links {
   display: flex;
   justify-content: center;
@@ -818,6 +822,11 @@ td small {
 .pill.off {
   background: var(--surface-soft);
   color: var(--muted);
+}
+
+.pill.warn {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
 }
 
 pre {

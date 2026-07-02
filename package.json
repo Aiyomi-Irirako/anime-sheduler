@@ -1,7 +1,7 @@
 {
-  "name": "discord-series-bot",
+  "name": "anime-sheduler",
   "version": "1.0.0",
-  "description": "Discord bot with a small web panel for weekly anime/series release schedules imported from CSV.",
+  "description": "Discord bot with a web panel for anime release schedules, LiveChart sync, and language-version tracking.",
   "type": "module",
   "private": true,
   "packageManager": "pnpm@9.15.9",
