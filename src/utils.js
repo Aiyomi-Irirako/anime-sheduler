@@ -12,6 +12,12 @@ export function parseInteger(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+export function normalizeEpisodeBatchSize(value) {
+  const number = parseInteger(value);
+  if (!Number.isFinite(number) || number < 2) return 1;
+  return Math.min(number, 50);
+}
+
 export function parseBoolean(value) {
   if (typeof value === "boolean") return value;
   const text = cleanString(value).toLowerCase();

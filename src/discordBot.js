@@ -37,6 +37,10 @@ function normalizeChannelIds(value) {
   return ids;
 }
 
+function normalizeRoleIds(value) {
+  return normalizeChannelIds(value);
+}
+
 function getChannelIds(store) {
   const settings = store.getSettings();
   const configured = normalizeChannelIds(settings.discordChannelIds);
@@ -79,6 +83,51 @@ function mentionUserPayload(content, userId) {
   };
 }
 
+function roleIdsFromSettings(settings, arrayKey, legacyKey) {
+  const fromArray = normalizeRoleIds(settings?.[arrayKey]);
+  if (fromArray.length) return fromArray;
+  return normalizeRoleIds(settings?.[legacyKey]);
+}
+
+export function releaseMentionRoleIds(release, settings = {}) {
+  if (!release) return [];
+  if (release.missingTime) {
+    return roleIdsFromSettings(settings, "discordMissingTimeRoleIds", "discordMissingTimeRoleId");
+  }
+  if (release.kind === "language") {
+    return roleIdsFromSettings(settings, "discordLanguageRoleIds", "discordLanguageRoleId");
+  }
+  return roleIdsFromSettings(settings, "discordReleaseRoleIds", "discordReleaseRoleId");
+}
+
+function withRoleMentions(content, roleIds) {
+  const ids = normalizeRoleIds(roleIds);
+  const payload = messagePayload(content);
+  if (!ids.length) return payload;
+
+  const mentionLine = ids.map((id) => `<@&${id}>`).join(" ");
+  const allowedMentions = {
+    ...(payload.allowedMentions || {}),
+    parse: [],
+    roles: [...new Set([...(payload.allowedMentions?.roles || []), ...ids])]
+  };
+
+  return {
+    ...payload,
+    content: payload.content ? `${mentionLine}\n${payload.content}`.slice(0, 2000) : mentionLine,
+    allowedMentions
+  };
+}
+
+async function mentionRoleIdsForChannel(channel, roleIds) {
+  const ids = normalizeRoleIds(roleIds);
+  if (!ids.length || !channel.guild) return [];
+
+  const fetched = await channel.guild.roles.fetch().catch(() => null);
+  const roles = fetched || channel.guild.roles.cache;
+  return ids.filter((id) => roles.has(id));
+}
+
 function releaseTitle(series, release) {
   const entry = formatEpisodeEntries(series, release).find((item) => ["main", "language"].includes(item.kind));
   return entry ? `${series.title} - ${entry.text}` : series.title;
@@ -100,10 +149,7 @@ function releaseDateParts(release, settings) {
 
 export function buildAnnouncement(series, release, settings) {
   const entries = formatEpisodeEntries(series, release);
-  const episodeText =
-    release?.kind === "language" && Number.isFinite(release.episode)
-      ? `Episode ${String(release.episode).padStart(2, "0")}`
-      : entries.find((entry) => entry.kind === "main")?.text || "Next episode";
+  const episodeText = entries.find((entry) => ["main", "language"].includes(entry.kind))?.text || "Next episode";
   const languageEpisodes =
     release?.kind === "language" ? [] : entries.filter((entry) => entry.kind === "language").map((entry) => entry.text);
   const releaseDate = releaseDateParts(release, settings);
@@ -409,7 +455,36 @@ export class DiscordService {
     return groups.sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  async sendToChannel(channelId, content) {
+  async listMentionRoles() {
+    if (!this.enabled || !this.ready || !this.client) return [];
+
+    const groups = await Promise.all(
+      [...this.client.guilds.cache.values()].map(async (guild) => {
+        const fetched = await guild.roles.fetch().catch(() => null);
+        const roles = fetched || guild.roles.cache;
+        const canMentionUnmentionable = Boolean(guild.members.me?.permissions.has(PermissionFlagsBits.MentionEveryone));
+
+        return {
+          id: guild.id,
+          name: guild.name,
+          roles: [...roles.values()]
+            .filter((role) => role.id !== guild.id && !role.managed)
+            .sort((a, b) => b.position - a.position || a.name.localeCompare(b.name))
+            .map((role) => ({
+              id: role.id,
+              name: role.name,
+              color: role.hexColor && role.hexColor !== "#000000" ? role.hexColor : "#8bb4ff",
+              mentionable: Boolean(role.mentionable),
+              canMention: Boolean(role.mentionable || canMentionUnmentionable)
+            }))
+        };
+      })
+    );
+
+    return groups.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async sendToChannel(channelId, content, options = {}) {
     const channel = await this.client.channels.fetch(channelId);
     if (!channel) {
       throw new Error(`Discord channel ${channelId} could not be fetched.`);
@@ -423,10 +498,11 @@ export class DiscordService {
       throw new Error(`Discord channel ${channelId} is not text based or could not be fetched.`);
     }
 
-    return channel.send(messagePayload(content));
+    const mentionRoleIds = await mentionRoleIdsForChannel(channel, options.mentionRoleIds);
+    return channel.send(withRoleMentions(content, mentionRoleIds));
   }
 
-  async post(content, channelIds = getChannelIds(this.store)) {
+  async post(content, channelIds = getChannelIds(this.store), options = {}) {
     if (!this.enabled) throw new Error("DISCORD_TOKEN is empty.");
     if (!this.ready) throw new Error("Discord bot is not ready yet.");
     const targets = normalizeChannelIds(channelIds);
@@ -437,7 +513,7 @@ export class DiscordService {
 
     for (const channelId of targets) {
       try {
-        const message = await this.sendToChannel(channelId, content);
+        const message = await this.sendToChannel(channelId, content, options);
         sent.push({ channelId, messageId: message.id });
       } catch (error) {
         failed.push({ channelId, message: error.message });

@@ -8,7 +8,7 @@ import {
   releasePostKey,
   shouldPostRelease
 } from "./schedule.js";
-import { buildAnnouncement } from "./discordBot.js";
+import { buildAnnouncement, releaseMentionRoleIds } from "./discordBot.js";
 import { enabledLanguageTracks } from "./languages.js";
 import { cleanString } from "./utils.js";
 
@@ -18,7 +18,8 @@ function releaseDedupeKey(series, release, settings) {
 
   const source = cleanString(series.scheduleLink || series.title).toLowerCase().replace(/\/+$/, "");
   const kind = release.kind === "language" ? `language:${release.languageCode}` : "main";
-  const episode = Number.isFinite(release.episode) ? release.episode : "next";
+  const episodeEnd = Number.isFinite(release.episodeEnd) && release.episodeEnd > release.episode ? `-${release.episodeEnd}` : "";
+  const episode = Number.isFinite(release.episode) ? `${release.episode}${episodeEnd}` : "next";
   return `${source}:${kind}:${episode}:${releaseAt.toISO()}`;
 }
 
@@ -52,7 +53,7 @@ export async function checkDueAnnouncements(store, discord) {
 
       const releaseAt = getReleasePostDateTime(release, settings);
       const message = buildAnnouncement(series, release, settings);
-      await discord.post(message);
+      await discord.post(message, undefined, { mentionRoleIds: releaseMentionRoleIds(release, settings) });
       if (dedupeKey) postedReleaseKeys.add(dedupeKey);
 
       const current = store.getSeries(series.id);

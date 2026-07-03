@@ -167,6 +167,37 @@ function mergeServices(items) {
   return normalizeServiceList(services.join(","));
 }
 
+function servicesOverlap(left = [], right = []) {
+  if (!left.length || !right.length) return true;
+  const rightSet = new Set(right.map((service) => service.toLowerCase()));
+  return left.some((service) => rightSet.has(service.toLowerCase()));
+}
+
+function sameReleaseBatch(left, right) {
+  return (
+    left &&
+    right &&
+    left.timestamp === right.timestamp &&
+    left.title === right.title &&
+    servicesOverlap(left.services, right.services)
+  );
+}
+
+function episodeBatchSize(items, release, filter = () => true) {
+  if (!release || !Number.isFinite(release.episode)) return 1;
+
+  const episodes = new Set(
+    items
+      .filter((item) => sameReleaseBatch(item, release) && filter(item))
+      .map((item) => item.episode)
+      .filter(Number.isFinite)
+  );
+
+  let size = 0;
+  while (episodes.has(release.episode + size)) size += 1;
+  return Math.max(1, size);
+}
+
 export function parseLiveChartEpisodes(html, options = {}) {
   const nowTimestamp = Number.isFinite(options.nowTimestamp)
     ? options.nowTimestamp
@@ -198,7 +229,9 @@ export function parseLiveChartEpisodes(html, options = {}) {
     .filter(Boolean);
   const parsed = rows.filter((row) => Number.isFinite(row.episode));
 
-  const main = pickMainRelease(parsed.filter((item) => item.isMain), nowTimestamp);
+  const mainItems = parsed.filter((item) => item.isMain);
+  const main = pickMainRelease(mainItems, nowTimestamp);
+  const mainEpisodeBatchSize = episodeBatchSize(upcomingItems(mainItems, nowTimestamp), main);
   const mainRows = rows.filter((item) => item.isMain);
   const hasUpcomingMain = upcomingItems(parsed.filter((item) => item.isMain), nowTimestamp).length > 0;
   const mainFinished = !main && mainRows.some((item) => item.isReleased) && !hasUpcomingMain;
@@ -215,6 +248,9 @@ export function parseLiveChartEpisodes(html, options = {}) {
         enabled: false,
         available: true,
         nextEpisode: item.episode,
+        episodeBatchSize: episodeBatchSize(upcomingItems(parsed.filter((entry) => entry.isDub), nowTimestamp), item, (entry) =>
+          entry.languageCodes.includes(code)
+        ),
         releaseTimestamp: item.timestamp,
         source: item.title || "livechart",
         timestamp: item.timestamp,
@@ -228,6 +264,7 @@ export function parseLiveChartEpisodes(html, options = {}) {
 
   return {
     nextEpisode: main?.episode ?? null,
+    episodeBatchSize: mainEpisodeBatchSize,
     dubNextEpisode: germanDub?.nextEpisode ?? null,
     languageTracks,
     service: mergeServices(rows.filter((item) => item.isMain || item.isDub)),

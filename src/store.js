@@ -7,6 +7,7 @@ import {
   cleanString,
   createId,
   normalizeDate,
+  normalizeEpisodeBatchSize,
   normalizeHttpUrl,
   normalizeTime,
   parseBoolean,
@@ -34,11 +35,18 @@ function normalizeDiscordChannelIds(value) {
   return ids;
 }
 
+function normalizeDiscordRoleIds(value) {
+  return normalizeDiscordChannelIds(value);
+}
+
 const DEFAULT_DATA = {
   settings: {
     timeZone: process.env.TIME_ZONE || DEFAULT_TIME_ZONE,
     discordChannelId: process.env.DISCORD_CHANNEL_ID || "",
     discordChannelIds: normalizeDiscordChannelIds(process.env.DISCORD_CHANNEL_ID),
+    discordReleaseRoleIds: normalizeDiscordRoleIds(process.env.DISCORD_RELEASE_ROLE_ID),
+    discordLanguageRoleIds: normalizeDiscordRoleIds(process.env.DISCORD_LANGUAGE_ROLE_ID),
+    discordMissingTimeRoleIds: normalizeDiscordRoleIds(process.env.DISCORD_MISSING_TIME_ROLE_ID),
     reminderMinutes: Number.parseInt(process.env.REMINDER_MINUTES || "0", 10),
     lookaheadDays: 14,
     schedulerIntervalSeconds: 60,
@@ -58,6 +66,42 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function normalizeStoreData(input = {}) {
+  const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const settingsSource = source.settings && typeof source.settings === "object" && !Array.isArray(source.settings) ? source.settings : {};
+  const data = {
+    ...clone(DEFAULT_DATA),
+    ...source
+  };
+
+  data.settings = { ...clone(DEFAULT_DATA.settings), ...settingsSource };
+  data.settings.discordChannelIds = normalizeDiscordChannelIds(
+    data.settings.discordChannelIds?.length
+      ? data.settings.discordChannelIds
+      : data.settings.discordChannelId || process.env.DISCORD_CHANNEL_ID
+  );
+  data.settings.discordChannelId = data.settings.discordChannelIds[0] || data.settings.discordChannelId || "";
+  data.settings.discordReleaseRoleIds = normalizeDiscordRoleIds(
+    data.settings.discordReleaseRoleIds?.length
+      ? data.settings.discordReleaseRoleIds
+      : data.settings.discordReleaseRoleId || process.env.DISCORD_RELEASE_ROLE_ID
+  );
+  data.settings.discordLanguageRoleIds = normalizeDiscordRoleIds(
+    data.settings.discordLanguageRoleIds?.length
+      ? data.settings.discordLanguageRoleIds
+      : data.settings.discordLanguageRoleId || process.env.DISCORD_LANGUAGE_ROLE_ID
+  );
+  data.settings.discordMissingTimeRoleIds = normalizeDiscordRoleIds(
+    data.settings.discordMissingTimeRoleIds?.length
+      ? data.settings.discordMissingTimeRoleIds
+      : data.settings.discordMissingTimeRoleId || process.env.DISCORD_MISSING_TIME_ROLE_ID
+  );
+  data.series = Array.isArray(data.series) ? data.series.map((item) => normalizeSeries(item, item)) : [];
+  data.posts = Array.isArray(data.posts) ? data.posts : [];
+
+  return data;
+}
+
 function seriesImportKey(series) {
   const scheduleLink = cleanString(series.scheduleLink).toLowerCase().replace(/\/+$/, "");
   if (scheduleLink) return `schedule:${scheduleLink}`;
@@ -67,6 +111,10 @@ function seriesImportKey(series) {
 function normalizeSeries(input, existing = {}) {
   const now = DateTime.now().toISO();
   const nextEpisode = parseInteger(input.nextEpisode);
+  const episodeBatchSize =
+    input.episodeBatchSize === undefined && existing.episodeBatchSize !== undefined
+      ? normalizeEpisodeBatchSize(existing.episodeBatchSize)
+      : normalizeEpisodeBatchSize(input.episodeBatchSize);
   const episodeCount = parseInteger(input.episodeCount);
   const existingEpisodeCount = parseInteger(existing.episodeCount);
   const existingEpisodeCountUpdatedAt = cleanString(input.episodeCountUpdatedAt || existing.episodeCountUpdatedAt);
@@ -118,6 +166,7 @@ function normalizeSeries(input, existing = {}) {
     rawRelease: cleanString(input.rawRelease),
     nextDate: normalizeDate(input.nextDate),
     nextEpisode,
+    episodeBatchSize,
     episodeCount,
     scheduleLink: cleanString(input.scheduleLink),
     imageUrl: normalizeHttpUrl(input.imageUrl),
@@ -153,6 +202,7 @@ function mergeImportedSeries(existing, incoming, options = {}) {
         releaseDay: incoming.releaseDay,
         releaseTime: incoming.releaseTime,
         nextEpisode: incoming.nextEpisode,
+        episodeBatchSize: incoming.episodeBatchSize,
         episodeCount: incoming.episodeCount,
         dubNextEpisode: incoming.dubNextEpisode,
         status: incoming.status,
@@ -194,19 +244,7 @@ export class Store {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     try {
       const raw = await fs.readFile(this.filePath, "utf8");
-      this.data = {
-        ...clone(DEFAULT_DATA),
-        ...JSON.parse(raw)
-      };
-      this.data.settings = { ...clone(DEFAULT_DATA.settings), ...this.data.settings };
-      this.data.settings.discordChannelIds = normalizeDiscordChannelIds(
-        this.data.settings.discordChannelIds?.length
-          ? this.data.settings.discordChannelIds
-          : this.data.settings.discordChannelId || process.env.DISCORD_CHANNEL_ID
-      );
-      this.data.settings.discordChannelId = this.data.settings.discordChannelIds[0] || this.data.settings.discordChannelId || "";
-      this.data.series = Array.isArray(this.data.series) ? this.data.series.map((item) => normalizeSeries(item, item)) : [];
-      this.data.posts = Array.isArray(this.data.posts) ? this.data.posts : [];
+      this.data = normalizeStoreData(JSON.parse(raw));
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
       this.data = clone(DEFAULT_DATA);
@@ -236,6 +274,9 @@ export class Store {
       timeZone: cleanString(patch.timeZone) || this.data.settings.timeZone,
       discordChannelIds,
       discordChannelId: discordChannelIds[0] || "",
+      discordReleaseRoleIds: normalizeDiscordRoleIds(patch.discordReleaseRoleIds),
+      discordLanguageRoleIds: normalizeDiscordRoleIds(patch.discordLanguageRoleIds),
+      discordMissingTimeRoleIds: normalizeDiscordRoleIds(patch.discordMissingTimeRoleIds),
       reminderMinutes: Math.max(0, parseInteger(patch.reminderMinutes) ?? 0),
       lookaheadDays: Math.max(1, parseInteger(patch.lookaheadDays) ?? 14),
       schedulerIntervalSeconds: Math.max(30, parseInteger(patch.schedulerIntervalSeconds) ?? 60),
@@ -323,6 +364,15 @@ export class Store {
 
     await this.save();
     return { total: incoming.length, created, updated, skipped };
+  }
+
+  async replaceData(input) {
+    this.data = normalizeStoreData(input);
+    await this.save();
+    return {
+      series: this.data.series.length,
+      posts: this.data.posts.length
+    };
   }
 
   async addPostLog(entry) {

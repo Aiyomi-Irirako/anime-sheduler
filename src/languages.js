@@ -1,5 +1,5 @@
 import { WEEKDAYS } from "./constants.js";
-import { cleanString, normalizeDate, normalizeTime, parseBoolean, parseInteger } from "./utils.js";
+import { cleanString, normalizeDate, normalizeEpisodeBatchSize, normalizeTime, parseBoolean, parseInteger } from "./utils.js";
 
 export const LANGUAGE_OPTIONS = [
   { code: "de", label: "German", short: "DE" },
@@ -77,6 +77,10 @@ export function normalizeLanguageTrack(input = {}, existing = {}) {
     input.nextEpisode === undefined && existing.nextEpisode !== undefined
       ? parseInteger(existing.nextEpisode)
       : parseInteger(input.nextEpisode);
+  const episodeBatchSize =
+    input.episodeBatchSize === undefined && existing.episodeBatchSize !== undefined
+      ? normalizeEpisodeBatchSize(existing.episodeBatchSize)
+      : normalizeEpisodeBatchSize(input.episodeBatchSize);
 
   return {
     code,
@@ -89,6 +93,7 @@ export function normalizeLanguageTrack(input = {}, existing = {}) {
           : parseBoolean(existing.available)
         : parseBoolean(input.available),
     nextEpisode,
+    episodeBatchSize,
     releaseDay:
       input.releaseDay === undefined && existing.releaseDay !== undefined
         ? normalizeTrackReleaseDay(existing.releaseDay)
@@ -154,6 +159,8 @@ export function mergeLanguageTracks(existingTracks, incomingTracks, enabledLangu
         enabled: existing?.enabled || enabledSet.has(code),
         available: incoming?.available ?? existing?.available ?? true,
         nextEpisode: incoming?.nextEpisode ?? existing?.nextEpisode,
+        episodeBatchSize:
+          incoming?.episodeBatchSize > 1 ? incoming.episodeBatchSize : existing?.episodeBatchSize,
         releaseDay: incoming?.releaseDay || existing?.releaseDay,
         releaseTime: incoming?.releaseTime || existing?.releaseTime,
         nextDate: incoming?.nextDate || existing?.nextDate,

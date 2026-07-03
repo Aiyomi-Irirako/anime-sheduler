@@ -1,13 +1,15 @@
 import express from "express";
+import multer from "multer";
 import path from "node:path";
 import { DateTime } from "luxon";
-import { buildAnnouncement, buildUpcomingSummary } from "./discordBot.js";
+import { buildAnnouncement, buildUpcomingSummary, releaseMentionRoleIds } from "./discordBot.js";
 import { APP_NAME, APP_VERSION, STATUS_OPTIONS, WEEKDAYS } from "./constants.js";
 import {
   getNextRelease,
   getFinishedDeletionDate,
   listUpcomingTodayTomorrow,
   formatReleaseDate,
+  formatEpisodeRange,
   getReleaseDayLabel,
   formatEpisodeEntries,
   isSeriesComplete
@@ -25,6 +27,42 @@ import {
 import { normalizePreferredService, pickPreferredService, serviceStyle, splitServiceNames } from "./services.js";
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 1
+  }
+});
+
+function redirectToSettings(res, tab, type, message) {
+  res.redirect(`/settings?${type}=${encodeURIComponent(message)}#settings-${encodeURIComponent(tab)}`);
+}
+
+function importResultMessage(result) {
+  return `Import complete: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped`;
+}
+
+function uploadedText(file, label) {
+  if (!file?.buffer?.length) throw new Error(`${label} file is missing`);
+  return file.buffer.toString("utf8").replace(/^\uFEFF/, "");
+}
+
+function backupDataFromJson(jsonText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    throw new Error("Backup JSON could not be parsed");
+  }
+
+  const data = parsed?.data && typeof parsed.data === "object" ? parsed.data : parsed;
+  if (!data || typeof data !== "object" || !data.settings || typeof data.settings !== "object" || !Array.isArray(data.series)) {
+    throw new Error("Backup JSON does not look like an Anime Sheduler database export");
+  }
+
+  return data;
+}
 
 function requireBasicAuth(req, res, next) {
   const password = process.env.WEB_PASSWORD;
@@ -163,6 +201,25 @@ function selectedDiscordChannelIds(settings) {
   return new Set(raw.map((id) => cleanString(id)).filter(Boolean));
 }
 
+function selectedDiscordRoleIds(settings, arrayKey, legacyKey) {
+  const raw = Array.isArray(settings[arrayKey]) && settings[arrayKey].length
+    ? settings[arrayKey]
+    : settings[legacyKey]
+      ? [settings[legacyKey]]
+      : [];
+  return new Set(raw.map((id) => cleanString(id)).filter(Boolean));
+}
+
+function renderServerAccordion(title, meta, content, open = false, extraClass = "") {
+  const className = ["server-accordion", extraClass].filter(Boolean).join(" ");
+  return `<details class="${escapeHtml(className)}" ${open ? "open" : ""}>
+    <summary class="server-summary">
+      <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(meta)}</small></span>
+    </summary>
+    <div class="server-accordion-body">${content}</div>
+  </details>`;
+}
+
 function renderDiscordChannelSettings(settings, channelGroups, discordEnabled) {
   const selected = selectedDiscordChannelIds(settings);
   const visibleIds = new Set();
@@ -194,11 +251,13 @@ function renderDiscordChannelSettings(settings, channelGroups, discordEnabled) {
               </label>`;
             })
             .join("");
+          const selectedCount = guild.channels.filter((channel) => selected.has(channel.id)).length;
+          const meta = selectedCount
+            ? `${selectedCount} selected`
+            : `${guild.channels.length} channel${guild.channels.length === 1 ? "" : "s"}`;
+          const content = `<div class="channel-grid">${rows || '<p class="muted-text">No announcement channels found.</p>'}</div>`;
 
-          return `<div class="channel-group">
-            <h3>${escapeHtml(guild.name)}</h3>
-            <div class="channel-grid">${rows || '<p class="muted-text">No announcement channels found.</p>'}</div>
-          </div>`;
+          return renderServerAccordion(guild.name, meta, content, selectedCount > 0, "channel-group");
         })
         .join("")
     : `<p class="muted-text">${
@@ -222,11 +281,154 @@ function renderDiscordChannelSettings(settings, channelGroups, discordEnabled) {
     <div class="field-label">Discord announcement channels</div>
     <input type="hidden" name="discordChannelIds" value="">
     ${groups}
-    ${preserved ? `<div class="channel-group"><h3>Configured IDs</h3><div class="channel-grid">${preserved}</div></div>` : ""}
+    ${preserved ? renderServerAccordion("Configured IDs", `${missingSelected.length} not visible`, `<div class="channel-grid">${preserved}</div>`, true, "channel-group") : ""}
   </div>`;
 }
 
-function renderSettings(settings, discordEnabled, channelGroups = []) {
+function renderRolePicker({ name, title, description, selected, roleGroups, discordEnabled }) {
+  const visibleIds = new Set();
+  const groups = roleGroups.length
+    ? roleGroups
+        .map((guild) => {
+          const rows = guild.roles
+            .map((role) => {
+              visibleIds.add(role.id);
+              const checked = selected.has(role.id);
+              const state = role.canMention ? (role.mentionable ? "mentionable" : "bot permission") : "not mentionable";
+              return `<label class="role-row ${role.canMention ? "" : "disabled"}">
+                <input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(role.id)}" ${checked ? "checked" : ""}>
+                <span class="role-dot" style="--role-color:${escapeHtml(role.color)}"></span>
+                <span class="role-name"><small>Role</small>@${escapeHtml(role.name)}</span>
+                <span class="role-state ${role.canMention ? "ok" : "bad"}">${escapeHtml(state)}</span>
+              </label>`;
+            })
+            .join("");
+          const selectedCount = guild.roles.filter((role) => selected.has(role.id)).length;
+          const meta = selectedCount
+            ? `${selectedCount} selected`
+            : `${guild.roles.length} role${guild.roles.length === 1 ? "" : "s"}`;
+          const content = `<div class="role-grid">${rows || '<p class="muted-text">No usable roles found.</p>'}</div>`;
+
+          return renderServerAccordion(guild.name, meta, content, selectedCount > 0, "role-group");
+        })
+        .join("")
+    : `<p class="muted-text">${
+        discordEnabled
+          ? "Discord is connected, but no role cache is available yet. Refresh this page in a moment."
+          : "Discord token is missing, so roles cannot be loaded."
+      }</p>`;
+
+  const missingSelected = [...selected].filter((id) => !visibleIds.has(id));
+  const preserved = missingSelected
+    .map(
+      (id) => `<label class="role-row disabled">
+        <input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(id)}" checked>
+        <span class="role-dot"></span>
+        <span class="role-name"><small>Configured</small>${escapeHtml(id)}</span>
+        <span class="role-state bad">not visible</span>
+      </label>`
+    )
+    .join("");
+
+  return `<div class="role-picker">
+    <div class="role-picker-title">
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(description)}</span>
+    </div>
+    <input type="hidden" name="${escapeHtml(name)}" value="">
+    ${groups}
+    ${preserved ? renderServerAccordion("Configured IDs", `${missingSelected.length} not visible`, `<div class="role-grid">${preserved}</div>`, true, "role-group") : ""}
+  </div>`;
+}
+
+function renderDiscordRoleSettings(settings, roleGroups, discordEnabled) {
+  const releaseSelected = selectedDiscordRoleIds(settings, "discordReleaseRoleIds", "discordReleaseRoleId");
+  const languageSelected = selectedDiscordRoleIds(settings, "discordLanguageRoleIds", "discordLanguageRoleId");
+  const missingSelected = selectedDiscordRoleIds(settings, "discordMissingTimeRoleIds", "discordMissingTimeRoleId");
+
+  return `<div class="span-2 role-settings">
+    <div>
+      <div class="field-label">Discord role mentions</div>
+      <p class="muted-text">Selected roles are pinged only in matching automatic release posts. Pick one role per server if the bot posts to multiple Discord servers.</p>
+    </div>
+    ${renderRolePicker({
+      name: "discordReleaseRoleIds",
+      title: "Timed main releases",
+      description: "Normal episodes with a known release time.",
+      selected: releaseSelected,
+      roleGroups,
+      discordEnabled
+    })}
+    ${renderRolePicker({
+      name: "discordLanguageRoleIds",
+      title: "Language releases",
+      description: "Dub or language-version posts with their own known time.",
+      selected: languageSelected,
+      roleGroups,
+      discordEnabled
+    })}
+    ${renderRolePicker({
+      name: "discordMissingTimeRoleIds",
+      title: "Time missing fallback",
+      description: "Posts that use the configured missing-time fallback.",
+      selected: missingSelected,
+      roleGroups,
+      discordEnabled
+    })}
+  </div>`;
+}
+
+function renderSettingsTab(key, label, detail) {
+  return `<button type="button" class="settings-tab" data-settings-target="${escapeHtml(key)}">
+    <span>${escapeHtml(label)}</span>
+    <small>${escapeHtml(detail)}</small>
+  </button>`;
+}
+
+function renderSettingsSection(key, eyebrow, title, description, content) {
+  const active = key === "discord" ? " is-active" : "";
+  return `<section class="settings-section${active}" id="settings-${escapeHtml(key)}" data-settings-section="${escapeHtml(key)}">
+    <div class="section-title">
+      <p class="eyebrow">${escapeHtml(eyebrow)}</p>
+      <h2>${escapeHtml(title)}</h2>
+      <p>${escapeHtml(description)}</p>
+    </div>
+    <div class="settings-section-body">${content}</div>
+  </section>`;
+}
+
+function renderSettingsScript() {
+  return `<script>
+    (() => {
+      const tabs = [...document.querySelectorAll("[data-settings-target]")];
+      const sections = [...document.querySelectorAll("[data-settings-section]")];
+      const savebar = document.querySelector("[data-settings-savebar]");
+      const valid = new Set(sections.map((section) => section.dataset.settingsSection));
+      const normalize = (value) => {
+        const key = String(value || "").replace(/^#?settings-/, "").replace(/^#/, "");
+        return valid.has(key) ? key : "discord";
+      };
+      const show = (target) => {
+        const key = normalize(target);
+        tabs.forEach((tab) => {
+          const active = tab.dataset.settingsTarget === key;
+          tab.classList.toggle("active", active);
+          tab.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        sections.forEach((section) => {
+          section.classList.toggle("is-active", section.dataset.settingsSection === key);
+        });
+        if (savebar) savebar.hidden = key === "import" || key === "backup";
+        localStorage.setItem("anime-sheduler-settings-tab", key);
+        history.replaceState(null, "", "#settings-" + key);
+      };
+      tabs.forEach((tab) => tab.addEventListener("click", () => show(tab.dataset.settingsTarget)));
+      show(location.hash || localStorage.getItem("anime-sheduler-settings-tab"));
+    })();
+  </script>`;
+}
+
+function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups = [], dataStats = {}) {
   const enabledLanguages = new Set(normalizeEnabledLanguageCodes(settings.enabledLanguageCodes || ["de"]));
   const languageOptions = LANGUAGE_OPTIONS.map(
     (language) => `<label class="check language-option">
@@ -237,14 +439,8 @@ function renderSettings(settings, discordEnabled, channelGroups = []) {
     </label>`
   ).join("");
 
-  return `<section class="panel">
-    <div class="section-title">
-      <h2>Settings</h2>
-      <p>${discordEnabled ? "Discord is configured." : "Discord token is missing. The web panel is running without bot login."}</p>
-    </div>
-    <form class="grid-form" method="post" action="/settings">
-      ${renderDiscordChannelSettings(settings, channelGroups, discordEnabled)}
-      <label>
+  const scheduleFields = `<div class="grid-form settings-field-grid">
+    <label>
         <span>Time zone</span>
         <input name="timeZone" value="${escapeHtml(settings.timeZone)}" placeholder="Europe/Berlin">
       </label>
@@ -268,6 +464,9 @@ function renderSettings(settings, discordEnabled, channelGroups = []) {
         <span>Missing time post</span>
         <input name="missingTimePostTime" value="${escapeHtml(settings.missingTimePostTime || "18:00")}" placeholder="18:00">
       </label>
+    </div>`;
+
+  const liveChartFields = `<div class="grid-form settings-field-grid">
       <label class="check span-2 boxed-check">
         <input type="checkbox" name="liveChartSyncEnabled" ${toFormBoolean(settings.liveChartSyncEnabled)}>
         <span>Update from LiveChart once per day</span>
@@ -280,36 +479,127 @@ function renderSettings(settings, discordEnabled, channelGroups = []) {
         <span>Last LiveChart sync</span>
         <input value="${escapeHtml(formatSyncStatus(settings))}" readonly>
       </label>
-      <div class="span-2">
+      <div class="form-actions span-2">
+        <button type="submit" class="button secondary" form="liveChartSyncForm">Sync LiveChart now</button>
+      </div>
+    </div>`;
+
+  const languageFields = `<div class="settings-language-panel">
         <span class="field-label">Auto-enabled languages</span>
         <div class="language-settings-grid">${languageOptions}</div>
+      </div>`;
+
+  return `<section class="settings-console">
+    <aside class="settings-sidebar" aria-label="Settings sections">
+      <div class="settings-sidebar-title">
+        <strong>Settings</strong>
+        <span>${discordEnabled ? "Discord connected" : "Discord offline"}</span>
       </div>
-      <div class="form-actions">
-        <button type="submit">Save settings</button>
-      </div>
-    </form>
-    <form class="compact-action" method="post" action="/sync-livechart-all">
-      <button type="submit" class="button secondary">Sync LiveChart now</button>
-    </form>
-  </section>`;
+      ${renderSettingsTab("discord", "Discord", "Channels and forum posts")}
+      ${renderSettingsTab("mentions", "Mentions", "Role pings per release type")}
+      ${renderSettingsTab("schedule", "Scheduler", "Timing and summaries")}
+      ${renderSettingsTab("livechart", "LiveChart", "Daily sync controls")}
+      ${renderSettingsTab("languages", "Languages", "Auto-enabled dub tracks")}
+      ${renderSettingsTab("import", "Import", "CSV season updates")}
+      ${renderSettingsTab("backup", "Backup", "Export and restore data")}
+    </aside>
+    <div class="settings-content">
+      <form class="settings-form" method="post" action="/settings">
+        ${renderSettingsSection("discord", "Discord", "Announcement Targets", "Choose where automatic release posts and summaries should be sent.", renderDiscordChannelSettings(settings, channelGroups, discordEnabled))}
+        ${renderSettingsSection("mentions", "Discord", "Role Mentions", "Pick role pings for main releases, language versions, and missing-time fallback posts.", renderDiscordRoleSettings(settings, roleGroups, discordEnabled))}
+        ${renderSettingsSection("schedule", "Timing", "Scheduler", "Control release timing, reminder behavior, and Discord summary sizes.", scheduleFields)}
+        ${renderSettingsSection("livechart", "Sync", "LiveChart", "Run the daily LiveChart refresh and inspect the latest sync status.", liveChartFields)}
+        ${renderSettingsSection("languages", "Languages", "Language Versions", "Choose which LiveChart language versions should be enabled automatically when found.", languageFields)}
+        <div class="settings-savebar" data-settings-savebar>
+          <span>Changes apply after saving.</span>
+          <button type="submit">Save settings</button>
+        </div>
+      </form>
+      ${renderImportPanel()}
+      ${renderBackupPanel(dataStats)}
+      <form id="liveChartSyncForm" class="hidden-form" method="post" action="/sync-livechart-all"></form>
+    </div>
+  </section>
+  ${renderSettingsScript()}`;
 }
 
 function renderImportPanel() {
-  return `<section class="panel">
+  return `<section class="settings-section" id="settings-import" data-settings-section="import">
     <div class="section-title">
+      <p class="eyebrow">Season Tools</p>
       <h2>CSV Import</h2>
-      <p>Paste the full CSV. Manually edited times stay untouched by default.</p>
+      <p>Paste a CSV or upload a file. Uploaded CSV files are parsed in memory and are not stored.</p>
     </div>
-    <form method="post" action="/import" class="stack">
-      <textarea name="csv" rows="10" placeholder="title,service,premiere,rldate,nextep,epcount,..."></textarea>
-      <div class="inline-options">
-        <label class="check"><input type="checkbox" name="updateExisting" checked> Update existing series</label>
-        <label class="check"><input type="checkbox" name="overwriteSchedule"> Overwrite schedule and episodes from CSV</label>
-      </div>
-      <div class="form-actions">
-        <button type="submit">Import CSV</button>
-      </div>
-    </form>
+    <div class="import-layout">
+      <form method="post" action="/import" class="stack import-card">
+        <label>
+          <span>Paste CSV</span>
+          <textarea name="csv" rows="10" placeholder="title,service,premiere,rldate,nextep,epcount,..."></textarea>
+        </label>
+        <div class="inline-options">
+          <label class="check"><input type="checkbox" name="updateExisting" checked> Update existing series</label>
+          <label class="check"><input type="checkbox" name="overwriteSchedule"> Overwrite schedule and episodes from CSV</label>
+        </div>
+        <div class="form-actions">
+          <button type="submit">Import pasted CSV</button>
+        </div>
+      </form>
+      <form method="post" action="/import-file" enctype="multipart/form-data" class="stack import-card">
+        <label>
+          <span>Upload CSV file</span>
+          <input type="file" name="csvFile" accept=".csv,text/csv" required>
+        </label>
+        <p class="muted-text">The file is read once, imported, and discarded. Maximum upload size: 10 MB.</p>
+        <div class="inline-options">
+          <label class="check"><input type="checkbox" name="updateExisting" checked> Update existing series</label>
+          <label class="check"><input type="checkbox" name="overwriteSchedule"> Overwrite schedule and episodes from CSV</label>
+        </div>
+        <div class="form-actions">
+          <button type="submit">Upload and import</button>
+        </div>
+      </form>
+    </div>
+  </section>`;
+}
+
+function renderBackupPanel(dataStats = {}) {
+  const seriesCount = Number.isFinite(dataStats.series) ? dataStats.series : 0;
+  const postsCount = Number.isFinite(dataStats.posts) ? dataStats.posts : 0;
+
+  return `<section class="settings-section" id="settings-backup" data-settings-section="backup">
+    <div class="section-title">
+      <p class="eyebrow">Data Portability</p>
+      <h2>Database Backup</h2>
+      <p>Export the complete JSON database before moving servers, then restore it on the new installation.</p>
+    </div>
+    <div class="backup-grid">
+      <article class="backup-card">
+        <div>
+          <h3>Export database</h3>
+          <p class="muted-text">Downloads settings, series, language tracks, finished states, post history, selected Discord channels, and role settings.</p>
+        </div>
+        <div class="backup-stats">
+          <span><strong>${escapeHtml(seriesCount)}</strong> series</span>
+          <span><strong>${escapeHtml(postsCount)}</strong> post logs</span>
+        </div>
+        <div class="form-actions">
+          <a class="button" href="/database/export">Download backup</a>
+        </div>
+      </article>
+      <form method="post" action="/database/import" enctype="multipart/form-data" class="stack backup-card" onsubmit="return confirm('Restore this backup? Current database content will be replaced.')">
+        <div>
+          <h3>Restore database</h3>
+          <p class="muted-text">Use an Anime Sheduler JSON backup. This replaces the current local database after upload.</p>
+        </div>
+        <label>
+          <span>Backup JSON</span>
+          <input type="file" name="databaseFile" accept=".json,application/json" required>
+        </label>
+        <div class="form-actions">
+          <button type="submit">Restore backup</button>
+        </div>
+      </form>
+    </div>
   </section>`;
 }
 
@@ -585,7 +875,7 @@ function renderFinishedPage(data, query) {
   );
 }
 
-function renderSettingsPage(data, discordEnabled, query, channelGroups = []) {
+function renderSettingsPage(data, discordEnabled, query, channelGroups = [], roleGroups = []) {
   return renderPage(
     "Settings",
     `${messageFromQuery(query)}
@@ -599,8 +889,10 @@ function renderSettingsPage(data, discordEnabled, query, channelGroups = []) {
       </div>
     </section>
     <div class="settings-layout">
-      ${renderSettings(data.settings, discordEnabled, channelGroups)}
-      ${renderImportPanel()}
+      ${renderSettings(data.settings, discordEnabled, channelGroups, roleGroups, {
+        series: data.series.length,
+        posts: data.posts.length
+      })}
     </div>`
   );
 }
@@ -649,6 +941,7 @@ function renderLanguageTrackSettings(series) {
         <input type="number" min="0" name="languageEpisode_${escapeHtml(key)}" value="${
           Number.isFinite(track.nextEpisode) ? escapeHtml(track.nextEpisode) : ""
         }" placeholder="Episode">
+        <input type="number" min="1" name="languageBatchSize_${escapeHtml(key)}" value="${escapeHtml(track.episodeBatchSize || 1)}" placeholder="Count">
         <select name="languageReleaseDay_${escapeHtml(key)}">${renderDayOptions(track.releaseDay || "")}</select>
         <input type="time" name="languageReleaseTime_${escapeHtml(key)}" value="${escapeHtml(track.releaseTime || "")}">
         <input type="date" name="languageNextDate_${escapeHtml(key)}" value="${escapeHtml(track.nextDate || "")}">
@@ -742,6 +1035,10 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
           <input type="number" min="0" name="nextEpisode" value="${Number.isFinite(series.nextEpisode) ? escapeHtml(series.nextEpisode) : ""}">
         </label>
         <label>
+          <span>Episodes this release</span>
+          <input type="number" min="1" name="episodeBatchSize" value="${escapeHtml(series.episodeBatchSize || 1)}">
+        </label>
+        <label>
           <span>Total episodes</span>
           <input type="number" min="0" name="episodeCount" value="${Number.isFinite(series.episodeCount) ? escapeHtml(series.episodeCount) : ""}">
         </label>
@@ -808,6 +1105,7 @@ function formToSeries(body, id = "") {
         enabled: body[`languageEnabled_${key}`] === "on",
         available: body[`languageAvailable_${key}`] === "1",
         nextEpisode: parseInteger(body[`languageEpisode_${key}`]),
+        episodeBatchSize: parseInteger(body[`languageBatchSize_${key}`]),
         releaseDay: cleanString(body[`languageReleaseDay_${key}`]),
         releaseTime: cleanString(body[`languageReleaseTime_${key}`]),
         nextDate: cleanString(body[`languageNextDate_${key}`])
@@ -826,6 +1124,7 @@ function formToSeries(body, id = "") {
     releaseTime: cleanString(body.releaseTime),
     nextDate: cleanString(body.nextDate),
     nextEpisode: parseInteger(body.nextEpisode),
+    episodeBatchSize: parseInteger(body.episodeBatchSize),
     languageTracks,
     dubNextEpisode: germanTrack?.nextEpisode ?? null,
     episodeCount: parseInteger(body.episodeCount),
@@ -863,11 +1162,17 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
   app.get(
     "/settings",
     asyncRoute(async (req, res) => {
-      const channelGroups = await discord.listTextChannels().catch((error) => {
-        console.warn(`Could not load Discord channels: ${error.message}`);
-        return [];
-      });
-      res.send(renderSettingsPage(store.snapshot(), discord.enabled, req.query, channelGroups));
+      const [channelGroups, roleGroups] = await Promise.all([
+        discord.listTextChannels().catch((error) => {
+          console.warn(`Could not load Discord channels: ${error.message}`);
+          return [];
+        }),
+        discord.listMentionRoles().catch((error) => {
+          console.warn(`Could not load Discord roles: ${error.message}`);
+          return [];
+        })
+      ]);
+      res.send(renderSettingsPage(store.snapshot(), discord.enabled, req.query, channelGroups, roleGroups));
     })
   );
 
@@ -882,17 +1187,67 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
   app.post(
     "/import",
     asyncRoute(async (req, res) => {
-      const csv = cleanString(req.body.csv);
-      if (!csv) return res.redirect("/settings?error=CSV is missing");
-      const result = await store.importCsv(csv, {
-        updateExisting: req.body.updateExisting === "on",
-        overwriteSchedule: req.body.overwriteSchedule === "on"
-      });
-      res.redirect(
-        `/settings?ok=${encodeURIComponent(
-          `Import complete: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped`
-        )}`
-      );
+      try {
+        const csv = cleanString(req.body.csv);
+        if (!csv) return redirectToSettings(res, "import", "error", "CSV is missing");
+        const result = await store.importCsv(csv, {
+          updateExisting: req.body.updateExisting === "on",
+          overwriteSchedule: req.body.overwriteSchedule === "on"
+        });
+        return redirectToSettings(res, "import", "ok", importResultMessage(result));
+      } catch (error) {
+        return redirectToSettings(res, "import", "error", error.message);
+      }
+    })
+  );
+
+  app.post(
+    "/import-file",
+    upload.single("csvFile"),
+    asyncRoute(async (req, res) => {
+      try {
+        const csv = uploadedText(req.file, "CSV");
+        if (!cleanString(csv)) return redirectToSettings(res, "import", "error", "CSV is missing");
+        const result = await store.importCsv(csv, {
+          updateExisting: req.body.updateExisting === "on",
+          overwriteSchedule: req.body.overwriteSchedule === "on"
+        });
+        return redirectToSettings(res, "import", "ok", importResultMessage(result));
+      } catch (error) {
+        return redirectToSettings(res, "import", "error", error.message);
+      }
+    })
+  );
+
+  app.get(
+    "/database/export",
+    asyncRoute(async (req, res) => {
+      const data = store.snapshot();
+      const now = DateTime.now().setZone(data.settings.timeZone || "Europe/Berlin");
+      const filename = `anime-sheduler-backup-${now.toFormat("yyyyLLdd-HHmm")}.json`;
+      const payload = {
+        app: APP_NAME,
+        version: APP_VERSION,
+        exportedAt: now.toISO(),
+        data
+      };
+
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.type("application/json").send(JSON.stringify(payload, null, 2));
+    })
+  );
+
+  app.post(
+    "/database/import",
+    upload.single("databaseFile"),
+    asyncRoute(async (req, res) => {
+      try {
+        const json = uploadedText(req.file, "Backup");
+        const result = await store.replaceData(backupDataFromJson(json));
+        return redirectToSettings(res, "backup", "ok", `Backup restored: ${result.series} series, ${result.posts} post logs`);
+      } catch (error) {
+        return redirectToSettings(res, "backup", "error", error.message);
+      }
     })
   );
 
@@ -942,6 +1297,7 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
             releaseTime: "",
             nextDate: "",
             nextEpisode: null,
+            episodeBatchSize: 1,
             episodeCount: null,
             languageTracks: [],
             scheduleLink: "",
@@ -998,7 +1354,7 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
       if (!release) return res.redirect(`/series/${encodeURIComponent(existing.id)}?error=No release date could be calculated`);
       const message = buildAnnouncement(patch, release, store.getSettings());
       try {
-        await discord.post(message);
+        await discord.post(message, undefined, { mentionRoleIds: releaseMentionRoleIds(release, store.getSettings()) });
         await store.addPostLog({ type: "manual-test", seriesId: patch.id, title: patch.title, message });
         res.redirect(`/series/${encodeURIComponent(existing.id)}?ok=Test post sent`);
       } catch (error) {
@@ -1020,9 +1376,18 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
         const updated = synced.updated || store.getSeries(saved.id) || saved;
         const live = synced.live;
         const parts = [];
-        if (Number.isFinite(live.nextEpisode)) parts.push(`Episode ${live.nextEpisode}`);
+        if (Number.isFinite(live.nextEpisode)) {
+          parts.push(formatEpisodeRange({ episode: live.nextEpisode, episodeBatchSize: live.episodeBatchSize, episodeEnd: live.nextEpisode + (live.episodeBatchSize || 1) - 1 }));
+        }
         for (const track of live.languageTracks || []) {
-          if (Number.isFinite(track.nextEpisode)) parts.push(`${track.label} Episode ${track.nextEpisode}`);
+          if (Number.isFinite(track.nextEpisode)) {
+            const range = formatEpisodeRange({
+              episode: track.nextEpisode,
+              episodeBatchSize: track.episodeBatchSize,
+              episodeEnd: track.nextEpisode + (track.episodeBatchSize || 1) - 1
+            });
+            parts.push(`${track.label} ${range}`);
+          }
         }
         res.redirect(
           `/series/${encodeURIComponent(updated.id)}?ok=${encodeURIComponent(
@@ -1055,6 +1420,8 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
         postService: pickPreferredService(series.service, series.preferredService),
         imageUrl: series.imageUrl,
         nextEpisode: release.episode,
+        episodeEnd: release.episodeEnd,
+        episodeBatchSize: release.episodeBatchSize,
         languageTracks: normalizeLanguageTracks(series.languageTracks || []).filter((track) => track.enabled),
         dubNextEpisode: series.dubbed && Number.isFinite(series.dubNextEpisode) ? series.dubNextEpisode : null,
         releaseAt: release.dateTime?.toISO() || null,
@@ -1066,6 +1433,15 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
   );
 
   app.get("/health", (req, res) => res.json({ ok: true }));
+
+  app.use((error, req, res, next) => {
+    if (error instanceof multer.MulterError) {
+      const tab = req.path.includes("database") ? "backup" : "import";
+      const message = error.code === "LIMIT_FILE_SIZE" ? "Upload is too large. Maximum size is 10 MB." : error.message;
+      return redirectToSettings(res, tab, "error", message);
+    }
+    return next(error);
+  });
 
   app.use((error, req, res, next) => {
     console.error(error);
