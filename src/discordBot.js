@@ -147,6 +147,18 @@ function releaseDateParts(release, settings) {
   };
 }
 
+const BLANK_INLINE_FIELD = { name: "\u200B", value: "\u200B", inline: true };
+const EMBED_WIDTH_SPACER = "\u2800".repeat(46);
+
+function stableWidthField() {
+  return { name: "\u200B", value: EMBED_WIDTH_SPACER, inline: false };
+}
+
+function releaseVersionLabel(release) {
+  if (release?.kind === "language") return release.languageLabel || release.languageCode || "Language";
+  return "Original";
+}
+
 export function buildAnnouncement(series, release, settings) {
   const entries = formatEpisodeEntries(series, release);
   const episodeText = entries.find((entry) => ["main", "language"].includes(entry.kind))?.text || "Next episode";
@@ -173,34 +185,34 @@ export function buildAnnouncement(series, release, settings) {
     .addFields(
       { name: "Date", value: truncate(releaseDate.date, 1024), inline: true },
       { name: "Time", value: truncate(releaseDate.time, 1024), inline: true },
-      { name: "Episode", value: truncate(episodeText, 1024), inline: true }
+      { name: "Episode", value: truncate(episodeText, 1024), inline: true },
+      { name: "Service", value: truncate(postService || "-", 1024), inline: true },
+      { name: "Version", value: truncate(releaseVersionLabel(release), 1024), inline: true },
+      { name: "Source", value: scheduleUrl ? `[Open schedule](${scheduleUrl})` : "-", inline: true }
     )
     .setTimestamp(new Date());
-
-  if (postService) {
-    embed.addFields({ name: "Service", value: truncate(postService, 1024), inline: true });
-  }
 
   if (languageEpisodes.length) {
     embed.addFields({ name: "Language versions", value: truncate(languageEpisodes.join("\n"), 1024), inline: false });
   }
 
-  if (release?.kind === "language") {
-    embed.addFields({ name: "Version", value: truncate(release.languageLabel || release.languageCode, 1024), inline: true });
-  }
-
   if (release?.missingTime) {
-    embed.addFields({
-      name: "Auto-post time",
-      value: `${getMissingTimePostTime(settings)} (time missing fallback)`,
-      inline: true
-    });
+    embed.addFields(
+      {
+        name: "Auto-post time",
+        value: `${getMissingTimePostTime(settings)} (time missing fallback)`,
+        inline: true
+      },
+      BLANK_INLINE_FIELD,
+      BLANK_INLINE_FIELD
+    );
   }
 
   if (scheduleUrl) {
     embed.setURL(scheduleUrl);
-    embed.addFields({ name: "Source", value: `[Open schedule](${scheduleUrl})`, inline: true });
   }
+
+  embed.addFields(stableWidthField());
 
   if (imageUrl) {
     embed.setThumbnail(imageUrl);
