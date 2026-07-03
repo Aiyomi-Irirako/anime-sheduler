@@ -18,7 +18,8 @@ function releaseDedupeKey(series, release, settings) {
 
   const source = cleanString(series.scheduleLink || series.title).toLowerCase().replace(/\/+$/, "");
   const kind = release.kind === "language" ? `language:${release.languageCode}` : "main";
-  const episode = Number.isFinite(release.episode) ? release.episode : "next";
+  const episodeEnd = Number.isFinite(release.episodeEnd) && release.episodeEnd > release.episode ? `-${release.episodeEnd}` : "";
+  const episode = Number.isFinite(release.episode) ? `${release.episode}${episodeEnd}` : "next";
   return `${source}:${kind}:${episode}:${releaseAt.toISO()}`;
 }
 

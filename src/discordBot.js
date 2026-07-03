@@ -149,10 +149,7 @@ function releaseDateParts(release, settings) {
 
 export function buildAnnouncement(series, release, settings) {
   const entries = formatEpisodeEntries(series, release);
-  const episodeText =
-    release?.kind === "language" && Number.isFinite(release.episode)
-      ? `Episode ${String(release.episode).padStart(2, "0")}`
-      : entries.find((entry) => entry.kind === "main")?.text || "Next episode";
+  const episodeText = entries.find((entry) => ["main", "language"].includes(entry.kind))?.text || "Next episode";
   const languageEpisodes =
     release?.kind === "language" ? [] : entries.filter((entry) => entry.kind === "language").map((entry) => entry.text);
   const releaseDate = releaseDateParts(release, settings);

@@ -7,6 +7,7 @@ import {
   cleanString,
   createId,
   normalizeDate,
+  normalizeEpisodeBatchSize,
   normalizeHttpUrl,
   normalizeTime,
   parseBoolean,
@@ -74,6 +75,10 @@ function seriesImportKey(series) {
 function normalizeSeries(input, existing = {}) {
   const now = DateTime.now().toISO();
   const nextEpisode = parseInteger(input.nextEpisode);
+  const episodeBatchSize =
+    input.episodeBatchSize === undefined && existing.episodeBatchSize !== undefined
+      ? normalizeEpisodeBatchSize(existing.episodeBatchSize)
+      : normalizeEpisodeBatchSize(input.episodeBatchSize);
   const episodeCount = parseInteger(input.episodeCount);
   const existingEpisodeCount = parseInteger(existing.episodeCount);
   const existingEpisodeCountUpdatedAt = cleanString(input.episodeCountUpdatedAt || existing.episodeCountUpdatedAt);
@@ -125,6 +130,7 @@ function normalizeSeries(input, existing = {}) {
     rawRelease: cleanString(input.rawRelease),
     nextDate: normalizeDate(input.nextDate),
     nextEpisode,
+    episodeBatchSize,
     episodeCount,
     scheduleLink: cleanString(input.scheduleLink),
     imageUrl: normalizeHttpUrl(input.imageUrl),
@@ -160,6 +166,7 @@ function mergeImportedSeries(existing, incoming, options = {}) {
         releaseDay: incoming.releaseDay,
         releaseTime: incoming.releaseTime,
         nextEpisode: incoming.nextEpisode,
+        episodeBatchSize: incoming.episodeBatchSize,
         episodeCount: incoming.episodeCount,
         dubNextEpisode: incoming.dubNextEpisode,
         status: incoming.status,

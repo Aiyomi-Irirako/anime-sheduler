@@ -30,6 +30,7 @@ export function prepareLiveLanguageTracks(liveTracks = [], settings = {}) {
 
 function hasChanged(series, live) {
   if (Number.isFinite(live.nextEpisode) && live.nextEpisode !== series.nextEpisode) return true;
+  if (live.episodeBatchSize > 1 && live.episodeBatchSize !== series.episodeBatchSize) return true;
   if (live.mainFinished && series.nextEpisode !== null) return true;
   if (live.mainFinished && series.status !== "finished") return true;
   if (Number.isFinite(live.episodeCount) && live.episodeCount !== series.episodeCount) return true;
@@ -44,6 +45,7 @@ function hasChanged(series, live) {
     if (!current) return true;
     if (
       current.nextEpisode !== track.nextEpisode ||
+      (track.episodeBatchSize > 1 && current.episodeBatchSize !== track.episodeBatchSize) ||
       current.available !== track.available ||
       current.enabled !== track.enabled ||
       current.releaseDay !== track.releaseDay ||
@@ -66,6 +68,7 @@ export async function syncOneSeriesFromLiveChart(store, series) {
     settings.enabledLanguageCodes || []
   );
   const nextEpisode = Number.isFinite(live.nextEpisode) ? live.nextEpisode : live.mainFinished ? null : series.nextEpisode;
+  const episodeBatchSize = live.episodeBatchSize > 1 ? live.episodeBatchSize : series.episodeBatchSize;
   const episodeCount = Number.isFinite(live.episodeCount) ? live.episodeCount : series.episodeCount;
   const hasMainEpisode = Number.isFinite(nextEpisode);
   const hasLanguageEpisode = languageTracks.some((track) => track.enabled && Number.isFinite(track.nextEpisode));
@@ -77,6 +80,7 @@ export async function syncOneSeriesFromLiveChart(store, series) {
     status: live.mainFinished ? "finished" : reactivated && hasMainEpisode ? "airing" : series.status,
     enabled: completedAfterSync ? false : reactivated ? true : series.enabled,
     nextEpisode,
+    episodeBatchSize,
     episodeCount,
     imageUrl: series.imageUrl || live.imageUrl,
     languageTracks,
@@ -118,6 +122,7 @@ export async function syncAllLiveChart(store, options = {}) {
 
       const before = {
         nextEpisode: current.nextEpisode,
+        episodeBatchSize: current.episodeBatchSize,
         episodeCount: current.episodeCount,
         status: current.status,
         enabled: current.enabled,
@@ -135,6 +140,7 @@ export async function syncAllLiveChart(store, options = {}) {
           before,
           after: {
             nextEpisode: synced.updated.nextEpisode,
+            episodeBatchSize: synced.updated.episodeBatchSize,
             episodeCount: synced.updated.episodeCount,
             status: synced.updated.status,
             enabled: synced.updated.enabled,

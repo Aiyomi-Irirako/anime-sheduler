@@ -627,7 +627,7 @@ textarea:focus {
 
 .language-track-row {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) 62px 92px 132px 92px 132px 88px;
+  grid-template-columns: minmax(150px, 1fr) 62px 92px 76px 132px 92px 132px 88px;
   gap: 10px;
   align-items: center;
   min-height: 42px;

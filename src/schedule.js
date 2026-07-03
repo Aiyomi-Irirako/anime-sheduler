@@ -1,6 +1,6 @@
 import { DateTime } from "luxon";
 import { WEEKDAYS } from "./constants.js";
-import { cleanString, normalizeDate, normalizeTime, padEpisode } from "./utils.js";
+import { cleanString, normalizeDate, normalizeEpisodeBatchSize, normalizeTime, padEpisode } from "./utils.js";
 import { enabledLanguageTracks, languageLabel } from "./languages.js";
 import { pickPreferredService } from "./services.js";
 
@@ -107,12 +107,29 @@ function weeklyBaseDate(series, now, zone) {
   return premiere.startOf("day") > now.startOf("day") ? premiere : now;
 }
 
+function episodeEnd(startEpisode, batchSize, episodeCount = null) {
+  if (!Number.isFinite(startEpisode)) return null;
+  const size = normalizeEpisodeBatchSize(batchSize);
+  const end = startEpisode + size - 1;
+  return Number.isFinite(episodeCount) ? Math.min(end, episodeCount) : end;
+}
+
+function releaseEpisodePatch(startEpisode, batchSize, episodeCount = null) {
+  const normalizedSize = normalizeEpisodeBatchSize(batchSize);
+  return {
+    episode: Number.isFinite(startEpisode) ? startEpisode : null,
+    episodeBatchSize: normalizedSize,
+    episodeEnd: episodeEnd(startEpisode, normalizedSize, episodeCount)
+  };
+}
+
 export function getNextRelease(series, settings, base = DateTime.now()) {
   const zone = settings.timeZone || "Europe/Berlin";
   const now = base.setZone(zone);
   if (!series?.enabled || series.status === "finished") return null;
 
   const episode = Number.isFinite(series.nextEpisode) ? series.nextEpisode : null;
+  const episodePatch = releaseEpisodePatch(episode, series.episodeBatchSize, series.episodeCount);
   const releaseTime = normalizeTime(series.releaseTime);
   const nextDate = normalizeDate(series.nextDate);
 
@@ -122,7 +139,7 @@ export function getNextRelease(series, settings, base = DateTime.now()) {
     return {
       kind: "main",
       type: "date",
-      episode,
+      ...episodePatch,
       date: combined.date,
       dateTime: combined.dateTime,
       missingTime: combined.missingTime
@@ -137,7 +154,7 @@ export function getNextRelease(series, settings, base = DateTime.now()) {
 
   const time = parseTimeParts(releaseTime);
   if (!time) {
-    return { kind: "main", type: "weekly", episode, date, dateTime: null, missingTime: true };
+    return { kind: "main", type: "weekly", ...episodePatch, date, dateTime: null, missingTime: true };
   }
 
   let dateTime = date.set(time);
@@ -146,7 +163,7 @@ export function getNextRelease(series, settings, base = DateTime.now()) {
     dateTime = date.set(time);
   }
 
-  return { kind: "main", type: "weekly", episode, date, dateTime, missingTime: false };
+  return { kind: "main", type: "weekly", ...episodePatch, date, dateTime, missingTime: false };
 }
 
 export function getNextLanguageRelease(series, track, settings, base = DateTime.now()) {
@@ -156,6 +173,7 @@ export function getNextLanguageRelease(series, track, settings, base = DateTime.
 
   const nextDate = normalizeDate(track.nextDate);
   const releaseTime = normalizeTime(track.releaseTime);
+  const episodePatch = releaseEpisodePatch(track.nextEpisode, track.episodeBatchSize, series.episodeCount);
 
   if (nextDate) {
     const combined = combineDateTime(nextDate, releaseTime, zone);
@@ -165,7 +183,7 @@ export function getNextLanguageRelease(series, track, settings, base = DateTime.
       type: "language-date",
       languageCode: track.code,
       languageLabel: track.label || languageLabel(track.code),
-      episode: track.nextEpisode,
+      ...episodePatch,
       date: combined.date,
       dateTime: combined.dateTime,
       missingTime: combined.missingTime
@@ -185,7 +203,7 @@ export function getNextLanguageRelease(series, track, settings, base = DateTime.
       type: "language-weekly",
       languageCode: track.code,
       languageLabel: track.label || languageLabel(track.code),
-      episode: track.nextEpisode,
+      ...episodePatch,
       date,
       dateTime: null,
       missingTime: true
@@ -203,7 +221,7 @@ export function getNextLanguageRelease(series, track, settings, base = DateTime.
     type: "language-weekly",
     languageCode: track.code,
     languageLabel: track.label || languageLabel(track.code),
-    episode: track.nextEpisode,
+    ...episodePatch,
     date,
     dateTime,
     missingTime: false
@@ -295,17 +313,26 @@ export function formatReleaseDate(release, settings, includeWeekday = true) {
 
 export function formatEpisodeEntries(series, release) {
   const entries = [];
+  const episodeRange = formatEpisodeRange(release);
   if (release?.kind === "language") {
-    return Number.isFinite(release.episode)
-      ? [{ text: `Episode ${padEpisode(release.episode)} (${release.languageLabel || languageLabel(release.languageCode)})`, kind: "language", code: release.languageCode }]
+    return episodeRange
+      ? [{ text: `${episodeRange} (${release.languageLabel || languageLabel(release.languageCode)})`, kind: "language", code: release.languageCode }]
       : [{ text: `Next episode (${release.languageLabel || languageLabel(release.languageCode)})`, kind: "language", code: release.languageCode }];
   }
 
-  if (Number.isFinite(release?.episode)) {
-    entries.push({ text: `Episode ${padEpisode(release.episode)}`, kind: "main" });
+  if (episodeRange) {
+    entries.push({ text: episodeRange, kind: "main" });
   }
 
   return entries.length ? entries : [{ text: "Next episode", kind: "empty" }];
+}
+
+export function formatEpisodeRange(release) {
+  if (!Number.isFinite(release?.episode)) return "";
+  const start = padEpisode(release.episode);
+  const endEpisode = Number.isFinite(release.episodeEnd) ? release.episodeEnd : release.episode;
+  if (endEpisode > release.episode) return `Episode ${start}-${padEpisode(endEpisode)}`;
+  return `Episode ${start}`;
 }
 
 export function formatEpisodeLabel(series, release, separator = " / ") {
@@ -353,8 +380,17 @@ export function releasePostKey(series, release, settings = {}) {
   if (!postDateTime) return "";
   const timeKind = release.missingTime ? "missing-time" : "release-time";
   const releaseKind = release.kind === "language" ? `language:${release.languageCode}` : "main";
-  const episodePart = release.missingTime ? "day" : release.episode || "next";
+  const episodeEndPart = Number.isFinite(release.episodeEnd) && release.episodeEnd > release.episode ? `-${release.episodeEnd}` : "";
+  const episodePart = release.missingTime ? "day" : Number.isFinite(release.episode) ? `${release.episode}${episodeEndPart}` : "next";
   return `${series.id}:${releaseKind}:${episodePart}:${timeKind}:${postDateTime.toISO()}`;
+}
+
+function releaseAdvanceEnd(currentEpisode, release, episodeCount) {
+  if (!Number.isFinite(currentEpisode)) return null;
+  const end = Number.isFinite(release?.episodeEnd)
+    ? release.episodeEnd
+    : currentEpisode + normalizeEpisodeBatchSize(release?.episodeBatchSize) - 1;
+  return Number.isFinite(episodeCount) ? Math.min(end, episodeCount) : end;
 }
 
 export function advanceAfterPost(series, release) {
@@ -364,12 +400,14 @@ export function advanceAfterPost(series, release) {
   const episodeCount = Number.isFinite(next.episodeCount) ? next.episodeCount : null;
 
   if (currentEpisode !== null) {
-    if (episodeCount !== null && currentEpisode >= episodeCount) {
+    const postedEnd = releaseAdvanceEnd(currentEpisode, release, episodeCount);
+    if (episodeCount !== null && postedEnd >= episodeCount) {
       next.nextEpisode = null;
     } else {
-      next.nextEpisode = currentEpisode + 1;
+      next.nextEpisode = postedEnd + 1;
     }
   }
+  next.episodeBatchSize = 1;
 
   const germanTrack = next.languageTracks.find((track) => track.code === "de");
   next.dubbed = Boolean(germanTrack?.enabled);
@@ -411,11 +449,12 @@ export function advanceLanguageAfterPost(series, release, postKey, postedAt = Da
     };
 
     if (trackEpisode === null) return updated;
-    if (episodeCount !== null && trackEpisode >= episodeCount) {
-      return { ...updated, enabled: false, nextEpisode: null };
+    const postedEnd = releaseAdvanceEnd(trackEpisode, release, episodeCount);
+    if (episodeCount !== null && postedEnd >= episodeCount) {
+      return { ...updated, enabled: false, nextEpisode: null, episodeBatchSize: 1 };
     }
 
-    const nextTrack = { ...updated, nextEpisode: trackEpisode + 1 };
+    const nextTrack = { ...updated, nextEpisode: postedEnd + 1, episodeBatchSize: 1 };
     const hadNextDate = Boolean(nextTrack.nextDate);
     if (hadNextDate && nextTrack.nextDate && nextTrack.weekly !== false) {
       const date = DateTime.fromISO(nextTrack.nextDate, { zone: "UTC" });

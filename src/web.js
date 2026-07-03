@@ -8,6 +8,7 @@ import {
   getFinishedDeletionDate,
   listUpcomingTodayTomorrow,
   formatReleaseDate,
+  formatEpisodeRange,
   getReleaseDayLabel,
   formatEpisodeEntries,
   isSeriesComplete
@@ -750,6 +751,7 @@ function renderLanguageTrackSettings(series) {
         <input type="number" min="0" name="languageEpisode_${escapeHtml(key)}" value="${
           Number.isFinite(track.nextEpisode) ? escapeHtml(track.nextEpisode) : ""
         }" placeholder="Episode">
+        <input type="number" min="1" name="languageBatchSize_${escapeHtml(key)}" value="${escapeHtml(track.episodeBatchSize || 1)}" placeholder="Count">
         <select name="languageReleaseDay_${escapeHtml(key)}">${renderDayOptions(track.releaseDay || "")}</select>
         <input type="time" name="languageReleaseTime_${escapeHtml(key)}" value="${escapeHtml(track.releaseTime || "")}">
         <input type="date" name="languageNextDate_${escapeHtml(key)}" value="${escapeHtml(track.nextDate || "")}">
@@ -843,6 +845,10 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
           <input type="number" min="0" name="nextEpisode" value="${Number.isFinite(series.nextEpisode) ? escapeHtml(series.nextEpisode) : ""}">
         </label>
         <label>
+          <span>Episodes this release</span>
+          <input type="number" min="1" name="episodeBatchSize" value="${escapeHtml(series.episodeBatchSize || 1)}">
+        </label>
+        <label>
           <span>Total episodes</span>
           <input type="number" min="0" name="episodeCount" value="${Number.isFinite(series.episodeCount) ? escapeHtml(series.episodeCount) : ""}">
         </label>
@@ -909,6 +915,7 @@ function formToSeries(body, id = "") {
         enabled: body[`languageEnabled_${key}`] === "on",
         available: body[`languageAvailable_${key}`] === "1",
         nextEpisode: parseInteger(body[`languageEpisode_${key}`]),
+        episodeBatchSize: parseInteger(body[`languageBatchSize_${key}`]),
         releaseDay: cleanString(body[`languageReleaseDay_${key}`]),
         releaseTime: cleanString(body[`languageReleaseTime_${key}`]),
         nextDate: cleanString(body[`languageNextDate_${key}`])
@@ -927,6 +934,7 @@ function formToSeries(body, id = "") {
     releaseTime: cleanString(body.releaseTime),
     nextDate: cleanString(body.nextDate),
     nextEpisode: parseInteger(body.nextEpisode),
+    episodeBatchSize: parseInteger(body.episodeBatchSize),
     languageTracks,
     dubNextEpisode: germanTrack?.nextEpisode ?? null,
     episodeCount: parseInteger(body.episodeCount),
@@ -1049,6 +1057,7 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
             releaseTime: "",
             nextDate: "",
             nextEpisode: null,
+            episodeBatchSize: 1,
             episodeCount: null,
             languageTracks: [],
             scheduleLink: "",
@@ -1127,9 +1136,18 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
         const updated = synced.updated || store.getSeries(saved.id) || saved;
         const live = synced.live;
         const parts = [];
-        if (Number.isFinite(live.nextEpisode)) parts.push(`Episode ${live.nextEpisode}`);
+        if (Number.isFinite(live.nextEpisode)) {
+          parts.push(formatEpisodeRange({ episode: live.nextEpisode, episodeBatchSize: live.episodeBatchSize, episodeEnd: live.nextEpisode + (live.episodeBatchSize || 1) - 1 }));
+        }
         for (const track of live.languageTracks || []) {
-          if (Number.isFinite(track.nextEpisode)) parts.push(`${track.label} Episode ${track.nextEpisode}`);
+          if (Number.isFinite(track.nextEpisode)) {
+            const range = formatEpisodeRange({
+              episode: track.nextEpisode,
+              episodeBatchSize: track.episodeBatchSize,
+              episodeEnd: track.nextEpisode + (track.episodeBatchSize || 1) - 1
+            });
+            parts.push(`${track.label} ${range}`);
+          }
         }
         res.redirect(
           `/series/${encodeURIComponent(updated.id)}?ok=${encodeURIComponent(
@@ -1162,6 +1180,8 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
         postService: pickPreferredService(series.service, series.preferredService),
         imageUrl: series.imageUrl,
         nextEpisode: release.episode,
+        episodeEnd: release.episodeEnd,
+        episodeBatchSize: release.episodeBatchSize,
         languageTracks: normalizeLanguageTracks(series.languageTracks || []).filter((track) => track.enabled),
         dubNextEpisode: series.dubbed && Number.isFinite(series.dubNextEpisode) ? series.dubNextEpisode : null,
         releaseAt: release.dateTime?.toISO() || null,
