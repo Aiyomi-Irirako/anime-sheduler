@@ -55,6 +55,19 @@ Check logs:
 docker compose logs -f
 ```
 
+## Screenshots
+
+![Anime Sheduler release dashboard](docs/assets/dashboard.png)
+
+<details>
+<summary>More screenshots</summary>
+
+![CSV import settings](docs/assets/csv-import.png)
+
+![Database backup settings](docs/assets/backup.png)
+
+</details>
+
 ## Documentation
 
 - [Setup Guide](docs/SETUP.md): Discord bot setup, configuration, Docker, reverse proxy, manual Node.js, and systemd
