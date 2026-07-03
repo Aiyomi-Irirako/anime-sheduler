@@ -4,13 +4,13 @@ A self-hosted Discord bot with a web panel for weekly anime and series release s
 
 Import CSV data, edit release times, track language-specific episode numbers, sync selected data from LiveChart, and post upcoming releases to Discord.
 
-Current version: `1.3.1`
+Current version: `1.3.2`
 
 ## Features
 
 - English web panel with light and dark theme
-- Sectioned Settings panel with clickable areas for Discord, mentions, scheduler, LiveChart, languages, and CSV import
-- CSV import through the web panel or CLI
+- Sectioned Settings panel with clickable areas for Discord, mentions, scheduler, LiveChart, languages, CSV import, and backups
+- CSV paste or file upload through the web panel, plus CLI import
 - Editable title, streaming services, preferred posting service, weekday, time, manual next date, next episode, episode count, notes, and LiveChart link
 - Episode ranges for multi-episode drops, for example `Episode 01-02`
 - Optional image URL per series for Discord release thumbnails
@@ -23,7 +23,7 @@ Current version: `1.3.1`
 - Manual "Upcoming Episodes" Discord summary
 - Discord slash commands: `/upcoming` for today/tomorrow and `/shedule day` for a selected weekday
 - Optional Basic Auth protection for the web panel
-- JSON data store, easy to back up and move between hosts
+- JSON data store with web export and restore for server moves
 - Docker Compose support for simple self-hosting
 
 ## Get Started
@@ -367,9 +367,12 @@ sudo systemctl restart anime-sheduler
 Use the web panel:
 
 1. Open `Settings`.
-2. Paste your CSV into `CSV Import`.
-3. Keep `Update existing series` enabled.
-4. Enable `Overwrite schedule and episodes from CSV` only when you intentionally want CSV data to replace manual edits.
+2. Open `CSV Import`.
+3. Paste your CSV or choose a `.csv` file under `Upload CSV file`.
+4. Keep `Update existing series` enabled.
+5. Enable `Overwrite schedule and episodes from CSV` only when you intentionally want CSV data to replace manual edits.
+
+Uploaded CSV files are parsed in memory and are not stored on disk. The upload limit is 10 MB.
 
 CLI import:
 
@@ -384,7 +387,7 @@ docker compose cp ./summer-2026.csv anime-sheduler:/tmp/summer-2026.csv
 docker compose exec anime-sheduler pnpm run import -- /tmp/summer-2026.csv
 ```
 
-For Docker, the web import is usually easier because you can paste the CSV directly.
+For Docker, the web import is usually easier because you can paste or upload the CSV directly.
 
 ## Editing Releases
 
@@ -431,6 +434,13 @@ This command is registered per guild when `DISCORD_CLIENT_ID` and `DISCORD_TOKEN
 ## Backups
 
 The important file is the JSON database.
+
+The web panel also has `Settings` -> `Backup`:
+
+- `Download backup` exports the complete Anime Sheduler database as JSON.
+- `Restore backup` accepts an Anime Sheduler export or a raw `db.json` and replaces the current database.
+
+Backups include series, language tracks, finished states, post logs, selected Discord channels, and role settings. They do not include `.env`, Discord bot tokens, Docker Compose files, or reverse proxy configuration.
 
 Manual Node/systemd path:
 

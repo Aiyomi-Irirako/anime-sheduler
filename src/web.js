@@ -1,4 +1,5 @@
 import express from "express";
+import multer from "multer";
 import path from "node:path";
 import { DateTime } from "luxon";
 import { buildAnnouncement, buildUpcomingSummary, releaseMentionRoleIds } from "./discordBot.js";
@@ -26,6 +27,42 @@ import {
 import { normalizePreferredService, pickPreferredService, serviceStyle, splitServiceNames } from "./services.js";
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 1
+  }
+});
+
+function redirectToSettings(res, tab, type, message) {
+  res.redirect(`/settings?${type}=${encodeURIComponent(message)}#settings-${encodeURIComponent(tab)}`);
+}
+
+function importResultMessage(result) {
+  return `Import complete: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped`;
+}
+
+function uploadedText(file, label) {
+  if (!file?.buffer?.length) throw new Error(`${label} file is missing`);
+  return file.buffer.toString("utf8").replace(/^\uFEFF/, "");
+}
+
+function backupDataFromJson(jsonText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    throw new Error("Backup JSON could not be parsed");
+  }
+
+  const data = parsed?.data && typeof parsed.data === "object" ? parsed.data : parsed;
+  if (!data || typeof data !== "object" || !data.settings || typeof data.settings !== "object" || !Array.isArray(data.series)) {
+    throw new Error("Backup JSON does not look like an Anime Sheduler database export");
+  }
+
+  return data;
+}
 
 function requireBasicAuth(req, res, next) {
   const password = process.env.WEB_PASSWORD;
@@ -381,7 +418,7 @@ function renderSettingsScript() {
         sections.forEach((section) => {
           section.classList.toggle("is-active", section.dataset.settingsSection === key);
         });
-        if (savebar) savebar.hidden = key === "import";
+        if (savebar) savebar.hidden = key === "import" || key === "backup";
         localStorage.setItem("anime-sheduler-settings-tab", key);
         history.replaceState(null, "", "#settings-" + key);
       };
@@ -391,7 +428,7 @@ function renderSettingsScript() {
   </script>`;
 }
 
-function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups = []) {
+function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups = [], dataStats = {}) {
   const enabledLanguages = new Set(normalizeEnabledLanguageCodes(settings.enabledLanguageCodes || ["de"]));
   const languageOptions = LANGUAGE_OPTIONS.map(
     (language) => `<label class="check language-option">
@@ -464,6 +501,7 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
       ${renderSettingsTab("livechart", "LiveChart", "Daily sync controls")}
       ${renderSettingsTab("languages", "Languages", "Auto-enabled dub tracks")}
       ${renderSettingsTab("import", "Import", "CSV season updates")}
+      ${renderSettingsTab("backup", "Backup", "Export and restore data")}
     </aside>
     <div class="settings-content">
       <form class="settings-form" method="post" action="/settings">
@@ -478,6 +516,7 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
         </div>
       </form>
       ${renderImportPanel()}
+      ${renderBackupPanel(dataStats)}
       <form id="liveChartSyncForm" class="hidden-form" method="post" action="/sync-livechart-all"></form>
     </div>
   </section>
@@ -489,18 +528,78 @@ function renderImportPanel() {
     <div class="section-title">
       <p class="eyebrow">Season Tools</p>
       <h2>CSV Import</h2>
-      <p>Paste the full CSV. Manually edited times stay untouched by default.</p>
+      <p>Paste a CSV or upload a file. Uploaded CSV files are parsed in memory and are not stored.</p>
     </div>
-    <form method="post" action="/import" class="stack">
-      <textarea name="csv" rows="10" placeholder="title,service,premiere,rldate,nextep,epcount,..."></textarea>
-      <div class="inline-options">
-        <label class="check"><input type="checkbox" name="updateExisting" checked> Update existing series</label>
-        <label class="check"><input type="checkbox" name="overwriteSchedule"> Overwrite schedule and episodes from CSV</label>
-      </div>
-      <div class="form-actions">
-        <button type="submit">Import CSV</button>
-      </div>
-    </form>
+    <div class="import-layout">
+      <form method="post" action="/import" class="stack import-card">
+        <label>
+          <span>Paste CSV</span>
+          <textarea name="csv" rows="10" placeholder="title,service,premiere,rldate,nextep,epcount,..."></textarea>
+        </label>
+        <div class="inline-options">
+          <label class="check"><input type="checkbox" name="updateExisting" checked> Update existing series</label>
+          <label class="check"><input type="checkbox" name="overwriteSchedule"> Overwrite schedule and episodes from CSV</label>
+        </div>
+        <div class="form-actions">
+          <button type="submit">Import pasted CSV</button>
+        </div>
+      </form>
+      <form method="post" action="/import-file" enctype="multipart/form-data" class="stack import-card">
+        <label>
+          <span>Upload CSV file</span>
+          <input type="file" name="csvFile" accept=".csv,text/csv" required>
+        </label>
+        <p class="muted-text">The file is read once, imported, and discarded. Maximum upload size: 10 MB.</p>
+        <div class="inline-options">
+          <label class="check"><input type="checkbox" name="updateExisting" checked> Update existing series</label>
+          <label class="check"><input type="checkbox" name="overwriteSchedule"> Overwrite schedule and episodes from CSV</label>
+        </div>
+        <div class="form-actions">
+          <button type="submit">Upload and import</button>
+        </div>
+      </form>
+    </div>
+  </section>`;
+}
+
+function renderBackupPanel(dataStats = {}) {
+  const seriesCount = Number.isFinite(dataStats.series) ? dataStats.series : 0;
+  const postsCount = Number.isFinite(dataStats.posts) ? dataStats.posts : 0;
+
+  return `<section class="settings-section" id="settings-backup" data-settings-section="backup">
+    <div class="section-title">
+      <p class="eyebrow">Data Portability</p>
+      <h2>Database Backup</h2>
+      <p>Export the complete JSON database before moving servers, then restore it on the new installation.</p>
+    </div>
+    <div class="backup-grid">
+      <article class="backup-card">
+        <div>
+          <h3>Export database</h3>
+          <p class="muted-text">Downloads settings, series, language tracks, finished states, post history, selected Discord channels, and role settings.</p>
+        </div>
+        <div class="backup-stats">
+          <span><strong>${escapeHtml(seriesCount)}</strong> series</span>
+          <span><strong>${escapeHtml(postsCount)}</strong> post logs</span>
+        </div>
+        <div class="form-actions">
+          <a class="button" href="/database/export">Download backup</a>
+        </div>
+      </article>
+      <form method="post" action="/database/import" enctype="multipart/form-data" class="stack backup-card" onsubmit="return confirm('Restore this backup? Current database content will be replaced.')">
+        <div>
+          <h3>Restore database</h3>
+          <p class="muted-text">Use an Anime Sheduler JSON backup. This replaces the current local database after upload.</p>
+        </div>
+        <label>
+          <span>Backup JSON</span>
+          <input type="file" name="databaseFile" accept=".json,application/json" required>
+        </label>
+        <div class="form-actions">
+          <button type="submit">Restore backup</button>
+        </div>
+      </form>
+    </div>
   </section>`;
 }
 
@@ -790,7 +889,10 @@ function renderSettingsPage(data, discordEnabled, query, channelGroups = [], rol
       </div>
     </section>
     <div class="settings-layout">
-      ${renderSettings(data.settings, discordEnabled, channelGroups, roleGroups)}
+      ${renderSettings(data.settings, discordEnabled, channelGroups, roleGroups, {
+        series: data.series.length,
+        posts: data.posts.length
+      })}
     </div>`
   );
 }
@@ -1085,17 +1187,67 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
   app.post(
     "/import",
     asyncRoute(async (req, res) => {
-      const csv = cleanString(req.body.csv);
-      if (!csv) return res.redirect("/settings?error=CSV is missing");
-      const result = await store.importCsv(csv, {
-        updateExisting: req.body.updateExisting === "on",
-        overwriteSchedule: req.body.overwriteSchedule === "on"
-      });
-      res.redirect(
-        `/settings?ok=${encodeURIComponent(
-          `Import complete: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped`
-        )}`
-      );
+      try {
+        const csv = cleanString(req.body.csv);
+        if (!csv) return redirectToSettings(res, "import", "error", "CSV is missing");
+        const result = await store.importCsv(csv, {
+          updateExisting: req.body.updateExisting === "on",
+          overwriteSchedule: req.body.overwriteSchedule === "on"
+        });
+        return redirectToSettings(res, "import", "ok", importResultMessage(result));
+      } catch (error) {
+        return redirectToSettings(res, "import", "error", error.message);
+      }
+    })
+  );
+
+  app.post(
+    "/import-file",
+    upload.single("csvFile"),
+    asyncRoute(async (req, res) => {
+      try {
+        const csv = uploadedText(req.file, "CSV");
+        if (!cleanString(csv)) return redirectToSettings(res, "import", "error", "CSV is missing");
+        const result = await store.importCsv(csv, {
+          updateExisting: req.body.updateExisting === "on",
+          overwriteSchedule: req.body.overwriteSchedule === "on"
+        });
+        return redirectToSettings(res, "import", "ok", importResultMessage(result));
+      } catch (error) {
+        return redirectToSettings(res, "import", "error", error.message);
+      }
+    })
+  );
+
+  app.get(
+    "/database/export",
+    asyncRoute(async (req, res) => {
+      const data = store.snapshot();
+      const now = DateTime.now().setZone(data.settings.timeZone || "Europe/Berlin");
+      const filename = `anime-sheduler-backup-${now.toFormat("yyyyLLdd-HHmm")}.json`;
+      const payload = {
+        app: APP_NAME,
+        version: APP_VERSION,
+        exportedAt: now.toISO(),
+        data
+      };
+
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.type("application/json").send(JSON.stringify(payload, null, 2));
+    })
+  );
+
+  app.post(
+    "/database/import",
+    upload.single("databaseFile"),
+    asyncRoute(async (req, res) => {
+      try {
+        const json = uploadedText(req.file, "Backup");
+        const result = await store.replaceData(backupDataFromJson(json));
+        return redirectToSettings(res, "backup", "ok", `Backup restored: ${result.series} series, ${result.posts} post logs`);
+      } catch (error) {
+        return redirectToSettings(res, "backup", "error", error.message);
+      }
     })
   );
 
@@ -1281,6 +1433,15 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
   );
 
   app.get("/health", (req, res) => res.json({ ok: true }));
+
+  app.use((error, req, res, next) => {
+    if (error instanceof multer.MulterError) {
+      const tab = req.path.includes("database") ? "backup" : "import";
+      const message = error.code === "LIMIT_FILE_SIZE" ? "Upload is too large. Maximum size is 10 MB." : error.message;
+      return redirectToSettings(res, tab, "error", message);
+    }
+    return next(error);
+  });
 
   app.use((error, req, res, next) => {
     console.error(error);

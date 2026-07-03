@@ -1,5 +1,5 @@
 export const APP_NAME = "Anime Sheduler";
-export const APP_VERSION = "1.3.1";
+export const APP_VERSION = "1.3.2";
 
 export const WEEKDAYS = [
   { key: "monday", label: "Monday", de: "Montag", luxon: 1 },
