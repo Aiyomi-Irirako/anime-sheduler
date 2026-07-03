@@ -58,6 +58,7 @@ docker compose logs -f
 ## Documentation
 
 - [Setup Guide](docs/SETUP.md): Discord bot setup, configuration, Docker, reverse proxy, manual Node.js, and systemd
+- [Windows Server Guide](docs/WINDOWS.md): PowerShell setup, Windows service/autostart, firewall, updates, and backups
 - [Usage Guide](docs/USAGE.md): CSV import, editing releases, language versions, LiveChart sync, and Discord posting
 - [Backup and Restore](docs/BACKUP.md): Web backups, raw `db.json` backups, and server moves
 - [Troubleshooting](docs/TROUBLESHOOTING.md): Common problems, logs, health checks, and security notes

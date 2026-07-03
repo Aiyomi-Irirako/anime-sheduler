@@ -2,6 +2,8 @@
 
 This guide covers Discord setup, environment configuration, Docker Compose, reverse proxy, and manual Node.js hosting.
 
+Windows users can use the separate [Windows Server Guide](WINDOWS.md).
+
 ## Discord Bot Setup
 
 1. Open the Discord Developer Portal.
