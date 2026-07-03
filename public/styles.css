@@ -541,13 +541,83 @@ textarea:focus {
   gap: 10px;
 }
 
-.channel-group {
+.channel-group:not(.server-accordion) {
   display: grid;
   gap: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px;
   background: var(--surface-soft);
+}
+
+.server-accordion {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.server-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 10px;
+  color: var(--ink);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.server-summary::-webkit-details-marker {
+  display: none;
+}
+
+.server-summary span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.server-summary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.server-summary small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.server-summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform 140ms ease;
+  flex: 0 0 auto;
+}
+
+.server-accordion[open] .server-summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.server-accordion[open] .server-summary::after {
+  transform: rotate(225deg);
+}
+
+.server-accordion-body {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
 }
 
 .channel-group h3 {
@@ -655,7 +725,7 @@ textarea:focus {
   font-size: 12px;
 }
 
-.role-group {
+.role-group:not(.server-accordion) {
   display: grid;
   gap: 7px;
 }

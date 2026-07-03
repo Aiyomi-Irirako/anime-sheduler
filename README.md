@@ -4,7 +4,7 @@ A self-hosted Discord bot with a web panel for weekly anime and series release s
 
 Import CSV data, edit release times, track language-specific episode numbers, sync selected data from LiveChart, and post upcoming releases to Discord.
 
-Current version: `1.3.0`
+Current version: `1.3.1`
 
 ## Features
 
@@ -18,8 +18,8 @@ Current version: `1.3.0`
 - Separate Discord posts for language versions with their own date and time
 - Daily LiveChart sync for active and finished series with a LiveChart schedule link
 - Automatic Discord announcements when an episode is due
-- Multiple Discord announcement channels across multiple servers
-- Optional Discord role mentions for timed main releases, language releases, and missing-time fallback posts
+- Multiple Discord announcement channels across multiple servers with collapsible per-server settings
+- Optional Discord role mentions for timed main releases, language releases, and missing-time fallback posts, grouped by server
 - Manual "Upcoming Episodes" Discord summary
 - Discord slash commands: `/upcoming` for today/tomorrow and `/shedule day` for a selected weekday
 - Optional Basic Auth protection for the web panel
@@ -397,8 +397,8 @@ For Docker, the web import is usually easier because you can paste the CSV direc
 - `LiveChart sync`: updates a single series from its LiveChart schedule link.
 - LiveChart language times: when LiveChart exposes a timestamp for a language version, the bot stores it as that language's next date and release time.
 - `Image URL`: optional poster/cover image used as a small Discord thumbnail. LiveChart sync can fill this automatically when available.
-- `Discord announcement channels`: select one or more text channels from any server the bot can access. Release posts are sent to every selected channel.
-- `Discord role mentions`: select roles for timed main releases, language releases, and missing-time fallback posts. If the bot posts to multiple servers, select the matching role in each server.
+- `Discord announcement channels`: open a server section, then select one or more text channels the bot can access. Release posts are sent to every selected channel.
+- `Discord role mentions`: open a server section and select roles for timed main releases, language releases, and missing-time fallback posts. If the bot posts to multiple servers, select the matching role in each server.
 - `Sync LiveChart now`: updates all active series that have a LiveChart link.
 - `Update from LiveChart once per day`: runs one slow daily sync at the configured hour.
 - `Continue weekly`: moves a manual `Next date` forward by 7 days after a post.

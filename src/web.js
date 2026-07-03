@@ -173,6 +173,16 @@ function selectedDiscordRoleIds(settings, arrayKey, legacyKey) {
   return new Set(raw.map((id) => cleanString(id)).filter(Boolean));
 }
 
+function renderServerAccordion(title, meta, content, open = false, extraClass = "") {
+  const className = ["server-accordion", extraClass].filter(Boolean).join(" ");
+  return `<details class="${escapeHtml(className)}" ${open ? "open" : ""}>
+    <summary class="server-summary">
+      <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(meta)}</small></span>
+    </summary>
+    <div class="server-accordion-body">${content}</div>
+  </details>`;
+}
+
 function renderDiscordChannelSettings(settings, channelGroups, discordEnabled) {
   const selected = selectedDiscordChannelIds(settings);
   const visibleIds = new Set();
@@ -204,11 +214,13 @@ function renderDiscordChannelSettings(settings, channelGroups, discordEnabled) {
               </label>`;
             })
             .join("");
+          const selectedCount = guild.channels.filter((channel) => selected.has(channel.id)).length;
+          const meta = selectedCount
+            ? `${selectedCount} selected`
+            : `${guild.channels.length} channel${guild.channels.length === 1 ? "" : "s"}`;
+          const content = `<div class="channel-grid">${rows || '<p class="muted-text">No announcement channels found.</p>'}</div>`;
 
-          return `<div class="channel-group">
-            <h3>${escapeHtml(guild.name)}</h3>
-            <div class="channel-grid">${rows || '<p class="muted-text">No announcement channels found.</p>'}</div>
-          </div>`;
+          return renderServerAccordion(guild.name, meta, content, selectedCount > 0, "channel-group");
         })
         .join("")
     : `<p class="muted-text">${
@@ -232,7 +244,7 @@ function renderDiscordChannelSettings(settings, channelGroups, discordEnabled) {
     <div class="field-label">Discord announcement channels</div>
     <input type="hidden" name="discordChannelIds" value="">
     ${groups}
-    ${preserved ? `<div class="channel-group"><h3>Configured IDs</h3><div class="channel-grid">${preserved}</div></div>` : ""}
+    ${preserved ? renderServerAccordion("Configured IDs", `${missingSelected.length} not visible`, `<div class="channel-grid">${preserved}</div>`, true, "channel-group") : ""}
   </div>`;
 }
 
@@ -249,16 +261,18 @@ function renderRolePicker({ name, title, description, selected, roleGroups, disc
               return `<label class="role-row ${role.canMention ? "" : "disabled"}">
                 <input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(role.id)}" ${checked ? "checked" : ""}>
                 <span class="role-dot" style="--role-color:${escapeHtml(role.color)}"></span>
-                <span class="role-name"><small>${escapeHtml(guild.name)}</small>@${escapeHtml(role.name)}</span>
+                <span class="role-name"><small>Role</small>@${escapeHtml(role.name)}</span>
                 <span class="role-state ${role.canMention ? "ok" : "bad"}">${escapeHtml(state)}</span>
               </label>`;
             })
             .join("");
+          const selectedCount = guild.roles.filter((role) => selected.has(role.id)).length;
+          const meta = selectedCount
+            ? `${selectedCount} selected`
+            : `${guild.roles.length} role${guild.roles.length === 1 ? "" : "s"}`;
+          const content = `<div class="role-grid">${rows || '<p class="muted-text">No usable roles found.</p>'}</div>`;
 
-          return `<div class="role-group">
-            <h4>${escapeHtml(guild.name)}</h4>
-            <div class="role-grid">${rows || '<p class="muted-text">No usable roles found.</p>'}</div>
-          </div>`;
+          return renderServerAccordion(guild.name, meta, content, selectedCount > 0, "role-group");
         })
         .join("")
     : `<p class="muted-text">${
@@ -267,8 +281,8 @@ function renderRolePicker({ name, title, description, selected, roleGroups, disc
           : "Discord token is missing, so roles cannot be loaded."
       }</p>`;
 
-  const preserved = [...selected]
-    .filter((id) => !visibleIds.has(id))
+  const missingSelected = [...selected].filter((id) => !visibleIds.has(id));
+  const preserved = missingSelected
     .map(
       (id) => `<label class="role-row disabled">
         <input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(id)}" checked>
@@ -286,7 +300,7 @@ function renderRolePicker({ name, title, description, selected, roleGroups, disc
     </div>
     <input type="hidden" name="${escapeHtml(name)}" value="">
     ${groups}
-    ${preserved ? `<div class="role-group"><h4>Configured IDs</h4><div class="role-grid">${preserved}</div></div>` : ""}
+    ${preserved ? renderServerAccordion("Configured IDs", `${missingSelected.length} not visible`, `<div class="role-grid">${preserved}</div>`, true, "role-group") : ""}
   </div>`;
 }
 
