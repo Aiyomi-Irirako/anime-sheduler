@@ -327,6 +327,56 @@ function renderDiscordRoleSettings(settings, roleGroups, discordEnabled) {
   </div>`;
 }
 
+function renderSettingsTab(key, label, detail) {
+  return `<button type="button" class="settings-tab" data-settings-target="${escapeHtml(key)}">
+    <span>${escapeHtml(label)}</span>
+    <small>${escapeHtml(detail)}</small>
+  </button>`;
+}
+
+function renderSettingsSection(key, eyebrow, title, description, content) {
+  const active = key === "discord" ? " is-active" : "";
+  return `<section class="settings-section${active}" id="settings-${escapeHtml(key)}" data-settings-section="${escapeHtml(key)}">
+    <div class="section-title">
+      <p class="eyebrow">${escapeHtml(eyebrow)}</p>
+      <h2>${escapeHtml(title)}</h2>
+      <p>${escapeHtml(description)}</p>
+    </div>
+    <div class="settings-section-body">${content}</div>
+  </section>`;
+}
+
+function renderSettingsScript() {
+  return `<script>
+    (() => {
+      const tabs = [...document.querySelectorAll("[data-settings-target]")];
+      const sections = [...document.querySelectorAll("[data-settings-section]")];
+      const savebar = document.querySelector("[data-settings-savebar]");
+      const valid = new Set(sections.map((section) => section.dataset.settingsSection));
+      const normalize = (value) => {
+        const key = String(value || "").replace(/^#?settings-/, "").replace(/^#/, "");
+        return valid.has(key) ? key : "discord";
+      };
+      const show = (target) => {
+        const key = normalize(target);
+        tabs.forEach((tab) => {
+          const active = tab.dataset.settingsTarget === key;
+          tab.classList.toggle("active", active);
+          tab.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        sections.forEach((section) => {
+          section.classList.toggle("is-active", section.dataset.settingsSection === key);
+        });
+        if (savebar) savebar.hidden = key === "import";
+        localStorage.setItem("anime-sheduler-settings-tab", key);
+        history.replaceState(null, "", "#settings-" + key);
+      };
+      tabs.forEach((tab) => tab.addEventListener("click", () => show(tab.dataset.settingsTarget)));
+      show(location.hash || localStorage.getItem("anime-sheduler-settings-tab"));
+    })();
+  </script>`;
+}
+
 function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups = []) {
   const enabledLanguages = new Set(normalizeEnabledLanguageCodes(settings.enabledLanguageCodes || ["de"]));
   const languageOptions = LANGUAGE_OPTIONS.map(
@@ -338,15 +388,8 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
     </label>`
   ).join("");
 
-  return `<section class="panel">
-    <div class="section-title">
-      <h2>Settings</h2>
-      <p>${discordEnabled ? "Discord is configured." : "Discord token is missing. The web panel is running without bot login."}</p>
-    </div>
-    <form class="grid-form" method="post" action="/settings">
-      ${renderDiscordChannelSettings(settings, channelGroups, discordEnabled)}
-      ${renderDiscordRoleSettings(settings, roleGroups, discordEnabled)}
-      <label>
+  const scheduleFields = `<div class="grid-form settings-field-grid">
+    <label>
         <span>Time zone</span>
         <input name="timeZone" value="${escapeHtml(settings.timeZone)}" placeholder="Europe/Berlin">
       </label>
@@ -370,6 +413,9 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
         <span>Missing time post</span>
         <input name="missingTimePostTime" value="${escapeHtml(settings.missingTimePostTime || "18:00")}" placeholder="18:00">
       </label>
+    </div>`;
+
+  const liveChartFields = `<div class="grid-form settings-field-grid">
       <label class="check span-2 boxed-check">
         <input type="checkbox" name="liveChartSyncEnabled" ${toFormBoolean(settings.liveChartSyncEnabled)}>
         <span>Update from LiveChart once per day</span>
@@ -382,23 +428,52 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
         <span>Last LiveChart sync</span>
         <input value="${escapeHtml(formatSyncStatus(settings))}" readonly>
       </label>
-      <div class="span-2">
+      <div class="form-actions span-2">
+        <button type="submit" class="button secondary" form="liveChartSyncForm">Sync LiveChart now</button>
+      </div>
+    </div>`;
+
+  const languageFields = `<div class="settings-language-panel">
         <span class="field-label">Auto-enabled languages</span>
         <div class="language-settings-grid">${languageOptions}</div>
+      </div>`;
+
+  return `<section class="settings-console">
+    <aside class="settings-sidebar" aria-label="Settings sections">
+      <div class="settings-sidebar-title">
+        <strong>Settings</strong>
+        <span>${discordEnabled ? "Discord connected" : "Discord offline"}</span>
       </div>
-      <div class="form-actions">
-        <button type="submit">Save settings</button>
-      </div>
-    </form>
-    <form class="compact-action" method="post" action="/sync-livechart-all">
-      <button type="submit" class="button secondary">Sync LiveChart now</button>
-    </form>
-  </section>`;
+      ${renderSettingsTab("discord", "Discord", "Channels and forum posts")}
+      ${renderSettingsTab("mentions", "Mentions", "Role pings per release type")}
+      ${renderSettingsTab("schedule", "Scheduler", "Timing and summaries")}
+      ${renderSettingsTab("livechart", "LiveChart", "Daily sync controls")}
+      ${renderSettingsTab("languages", "Languages", "Auto-enabled dub tracks")}
+      ${renderSettingsTab("import", "Import", "CSV season updates")}
+    </aside>
+    <div class="settings-content">
+      <form class="settings-form" method="post" action="/settings">
+        ${renderSettingsSection("discord", "Discord", "Announcement Targets", "Choose where automatic release posts and summaries should be sent.", renderDiscordChannelSettings(settings, channelGroups, discordEnabled))}
+        ${renderSettingsSection("mentions", "Discord", "Role Mentions", "Pick role pings for main releases, language versions, and missing-time fallback posts.", renderDiscordRoleSettings(settings, roleGroups, discordEnabled))}
+        ${renderSettingsSection("schedule", "Timing", "Scheduler", "Control release timing, reminder behavior, and Discord summary sizes.", scheduleFields)}
+        ${renderSettingsSection("livechart", "Sync", "LiveChart", "Run the daily LiveChart refresh and inspect the latest sync status.", liveChartFields)}
+        ${renderSettingsSection("languages", "Languages", "Language Versions", "Choose which LiveChart language versions should be enabled automatically when found.", languageFields)}
+        <div class="settings-savebar" data-settings-savebar>
+          <span>Changes apply after saving.</span>
+          <button type="submit">Save settings</button>
+        </div>
+      </form>
+      ${renderImportPanel()}
+      <form id="liveChartSyncForm" class="hidden-form" method="post" action="/sync-livechart-all"></form>
+    </div>
+  </section>
+  ${renderSettingsScript()}`;
 }
 
 function renderImportPanel() {
-  return `<section class="panel">
+  return `<section class="settings-section" id="settings-import" data-settings-section="import">
     <div class="section-title">
+      <p class="eyebrow">Season Tools</p>
       <h2>CSV Import</h2>
       <p>Paste the full CSV. Manually edited times stay untouched by default.</p>
     </div>
@@ -702,7 +777,6 @@ function renderSettingsPage(data, discordEnabled, query, channelGroups = [], rol
     </section>
     <div class="settings-layout">
       ${renderSettings(data.settings, discordEnabled, channelGroups, roleGroups)}
-      ${renderImportPanel()}
     </div>`
   );
 }

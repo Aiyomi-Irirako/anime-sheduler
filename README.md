@@ -4,11 +4,12 @@ A self-hosted Discord bot with a web panel for weekly anime and series release s
 
 Import CSV data, edit release times, track language-specific episode numbers, sync selected data from LiveChart, and post upcoming releases to Discord.
 
-Current version: `1.2.0`
+Current version: `1.3.0`
 
 ## Features
 
 - English web panel with light and dark theme
+- Sectioned Settings panel with clickable areas for Discord, mentions, scheduler, LiveChart, languages, and CSV import
 - CSV import through the web panel or CLI
 - Editable title, streaming services, preferred posting service, weekday, time, manual next date, next episode, episode count, notes, and LiveChart link
 - Episode ranges for multi-episode drops, for example `Episode 01-02`
