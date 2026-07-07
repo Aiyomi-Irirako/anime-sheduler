@@ -228,6 +228,29 @@ export function getNextLanguageRelease(series, track, settings, base = DateTime.
   };
 }
 
+export function getNextAnnouncementRelease(series, settings, base = DateTime.now()) {
+  const mainRelease = getNextRelease(series, settings, base);
+  if (!mainRelease) return null;
+
+  const mainPostAt = getReleasePostDateTime(mainRelease, settings);
+  if (!mainPostAt) return mainRelease;
+
+  const languageReleases = enabledLanguageTracks(series)
+    .map((track) => getNextLanguageRelease(series, track, settings, base))
+    .filter((release) => {
+      const releaseAt = getReleasePostDateTime(release, settings);
+      return releaseAt?.isValid && releaseAt.toISO() === mainPostAt.toISO();
+    });
+
+  if (!languageReleases.length) return mainRelease;
+
+  return {
+    ...mainRelease,
+    kind: "combined",
+    releases: [mainRelease, ...languageReleases]
+  };
+}
+
 export function listUpcoming(seriesList, settings, days = 14, base = DateTime.now()) {
   const zone = settings.timeZone || "Europe/Berlin";
   const now = base.setZone(zone);
@@ -311,8 +334,7 @@ export function formatReleaseDate(release, settings, includeWeekday = true) {
     : withLocale.toFormat("dd LLL yyyy HH:mm");
 }
 
-export function formatEpisodeEntries(series, release) {
-  const entries = [];
+function formatSingleEpisodeEntries(release) {
   const episodeRange = formatEpisodeRange(release);
   if (release?.kind === "language") {
     return episodeRange
@@ -320,11 +342,21 @@ export function formatEpisodeEntries(series, release) {
       : [{ text: `Next episode (${release.languageLabel || languageLabel(release.languageCode)})`, kind: "language", code: release.languageCode }];
   }
 
+  const entries = [];
   if (episodeRange) {
     entries.push({ text: episodeRange, kind: "main" });
   }
 
   return entries.length ? entries : [{ text: "Next episode", kind: "empty" }];
+}
+
+export function formatEpisodeEntries(series, release) {
+  if (Array.isArray(release?.releases) && release.releases.length) {
+    const entries = release.releases.flatMap((item) => formatSingleEpisodeEntries(item));
+    return entries.length ? entries : [{ text: "Next episode", kind: "empty" }];
+  }
+
+  return formatSingleEpisodeEntries(release);
 }
 
 export function formatEpisodeRange(release) {

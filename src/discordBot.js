@@ -90,6 +90,10 @@ function roleIdsFromSettings(settings, arrayKey, legacyKey) {
 }
 
 export function releaseMentionRoleIds(release, settings = {}) {
+  if (Array.isArray(release?.releases) && release.releases.length) {
+    return [...new Set(release.releases.flatMap((item) => releaseMentionRoleIds(item, settings)))];
+  }
+
   if (!release) return [];
   if (release.missingTime) {
     return roleIdsFromSettings(settings, "discordMissingTimeRoleIds", "discordMissingTimeRoleId");
@@ -129,7 +133,8 @@ async function mentionRoleIdsForChannel(channel, roleIds) {
 }
 
 function releaseTitle(series, release) {
-  const entry = formatEpisodeEntries(series, release).find((item) => ["main", "language"].includes(item.kind));
+  const entries = formatEpisodeEntries(series, release);
+  const entry = entries.find((item) => item.kind === "main") || entries.find((item) => item.kind === "language");
   return entry ? `${series.title} - ${entry.text}` : series.title;
 }
 
@@ -155,15 +160,27 @@ function stableWidthField() {
 }
 
 function releaseVersionLabel(release) {
+  if (Array.isArray(release?.releases) && release.releases.length) {
+    const labels = release.releases.map((item) =>
+      item.kind === "language" ? item.languageLabel || item.languageCode || "Language" : "Original"
+    );
+    return [...new Set(labels)].join(" + ");
+  }
+
   if (release?.kind === "language") return release.languageLabel || release.languageCode || "Language";
   return "Original";
 }
 
 export function buildAnnouncement(series, release, settings) {
+  const isCombinedRelease = Array.isArray(release?.releases) && release.releases.length > 1;
   const entries = formatEpisodeEntries(series, release);
-  const episodeText = entries.find((entry) => ["main", "language"].includes(entry.kind))?.text || "Next episode";
+  const mainEpisode = entries.find((entry) => entry.kind === "main");
+  const versionEpisodes = entries.filter((entry) => entry.kind === "language");
+  const episodeText = isCombinedRelease && !mainEpisode
+    ? versionEpisodes.map((entry) => entry.text).join("\n") || "Next episode"
+    : (mainEpisode || entries.find((entry) => entry.kind === "language"))?.text || "Next episode";
   const languageEpisodes =
-    release?.kind === "language" ? [] : entries.filter((entry) => entry.kind === "language").map((entry) => entry.text);
+    release?.kind === "language" || (isCombinedRelease && !mainEpisode) ? [] : versionEpisodes.map((entry) => entry.text);
   const releaseDate = releaseDateParts(release, settings);
   const scheduleUrl = normalizeHttpUrl(series.scheduleLink);
   const imageUrl = normalizeHttpUrl(series.imageUrl);
@@ -174,7 +191,9 @@ export function buildAnnouncement(series, release, settings) {
         ? "The exact release time is unknown, so this announcement uses the configured fallback time."
         : release?.kind === "language"
           ? `A new ${release.languageLabel || "language"} episode is available now.`
-          : "A new episode is available now."),
+          : isCombinedRelease
+            ? "New versions are available now."
+            : "A new episode is available now."),
     240
   );
 

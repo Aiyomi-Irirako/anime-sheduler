@@ -7,6 +7,7 @@ import { APP_NAME, APP_VERSION, STATUS_OPTIONS, WEEKDAYS } from "./constants.js"
 import {
   getNextRelease,
   getFinishedDeletionDate,
+  getNextAnnouncementRelease,
   listUpcomingTodayTomorrow,
   formatReleaseDate,
   formatEpisodeRange,
@@ -1350,7 +1351,7 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
       const existing = store.getSeries(req.params.id);
       if (!existing) return res.redirect("/?error=Series not found");
       const patch = await store.upsertSeries({ ...existing, ...formToSeries(req.body, existing.id) });
-      const release = getNextRelease(patch, store.getSettings(), DateTime.now());
+      const release = getNextAnnouncementRelease(patch, store.getSettings(), DateTime.now());
       if (!release) return res.redirect(`/series/${encodeURIComponent(existing.id)}?error=No release date could be calculated`);
       const message = buildAnnouncement(patch, release, store.getSettings());
       try {
