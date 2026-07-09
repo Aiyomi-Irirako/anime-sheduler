@@ -265,6 +265,7 @@ export function parseLiveChartEpisodes(html, options = {}) {
   return {
     nextEpisode: main?.episode ?? null,
     episodeBatchSize: mainEpisodeBatchSize,
+    mainReleaseTimestamp: main?.timestamp ?? null,
     dubNextEpisode: germanDub?.nextEpisode ?? null,
     languageTracks,
     service: mergeServices(rows.filter((item) => item.isMain || item.isDub)),

@@ -1223,6 +1223,48 @@ td small {
   margin-top: 2px;
 }
 
+.change-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.change-list li {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+}
+
+.change-list strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.change-list span,
+.change-list a {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.change-list a {
+  color: var(--accent);
+}
+
+.change-list .change-empty {
+  opacity: 0.7;
+}
+
+.change-list .change-arrow {
+  color: var(--accent);
+  font-weight: 850;
+}
+
 .title-link {
   color: var(--ink);
   font-weight: 850;
@@ -1344,6 +1386,14 @@ pre {
 
   .upcoming-list li {
     grid-template-columns: 1fr;
+  }
+
+  .change-list li {
+    grid-template-columns: 1fr;
+  }
+
+  .change-list .change-arrow {
+    display: none;
   }
 
   .language-settings-grid,
