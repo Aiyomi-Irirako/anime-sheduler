@@ -122,6 +122,7 @@ function renderPage(title, content) {
       <a href="/finished">Finished</a>
       <a href="/series/new">New Series</a>
       <a href="/settings">Settings</a>
+      <a href="/changelog">Changelog</a>
       <a href="/api/upcoming">API</a>
     </nav>
     <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle theme">
@@ -876,6 +877,135 @@ function renderFinishedPage(data, query) {
   );
 }
 
+function changelogSourceLabel(source) {
+  const labels = {
+    manual: "Manual",
+    "csv-import": "CSV import",
+    "livechart-sync": "LiveChart sync",
+    "pre-post-livechart-sync": "Pre-post sync",
+    "scheduler-post": "Scheduler post",
+    "livechart-cleanup": "LiveChart cleanup"
+  };
+  return labels[cleanString(source)] || cleanString(source) || "Unknown";
+}
+
+function changelogActionLabel(action) {
+  const labels = {
+    created: "Created",
+    updated: "Updated",
+    deleted: "Deleted"
+  };
+  return labels[cleanString(action)] || cleanString(action) || "Updated";
+}
+
+function changelogActionClass(action) {
+  if (action === "created") return "on";
+  if (action === "deleted") return "warn";
+  return "off";
+}
+
+function formatChangelogDate(value, settings) {
+  const date = DateTime.fromISO(cleanString(value), { zone: settings.timeZone || "Europe/Berlin" });
+  if (!date.isValid) return "Unknown";
+  return date.setLocale("en").toFormat("dd LLL yyyy HH:mm");
+}
+
+function renderChangeDetails(entry) {
+  const changes = Array.isArray(entry.changes) ? entry.changes : [];
+  if (!changes.length) {
+    const action = cleanString(entry.action);
+    const text = action === "created" ? "Entry created." : action === "deleted" ? "Entry deleted." : "No field differences recorded.";
+    return `<span class="muted-text">${escapeHtml(text)}</span>`;
+  }
+
+  const renderValue = (value) => {
+    const text = cleanString(value) || "-";
+    if (text === "-") return `<span class="change-empty">-</span>`;
+
+    const maxLength = 120;
+    const label = text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text;
+    if (/^https?:\/\//i.test(text)) {
+      let urlLabel = label;
+      try {
+        const url = new URL(text);
+        const path = url.pathname.length > 54 ? `${url.pathname.slice(0, 53)}...` : url.pathname;
+        urlLabel = `${url.hostname}${path}`;
+      } catch {
+        urlLabel = label;
+      }
+      return `<a class="change-value" href="${escapeHtml(text)}" target="_blank" rel="noreferrer" title="${escapeHtml(text)}">${escapeHtml(urlLabel)}</a>`;
+    }
+
+    return `<span class="change-value" title="${escapeHtml(text)}">${escapeHtml(label)}</span>`;
+  };
+
+  return `<ul class="change-list">${changes
+    .map(
+      (change) => `<li>
+        <strong>${escapeHtml(change.label || change.field)}</strong>
+        ${renderValue(change.before)}
+        <span class="change-arrow">-&gt;</span>
+        ${renderValue(change.after)}
+      </li>`
+    )
+    .join("")}</ul>`;
+}
+
+function renderChangelogPage(data, query) {
+  const entries = Array.isArray(data.changeLog) ? data.changeLog : [];
+  const rows = entries
+    .map((entry) => {
+      const title = cleanString(entry.title) || "Unknown series";
+      const titleHtml = entry.seriesId
+        ? `<a class="title-link" href="/series/${escapeHtml(entry.seriesId)}">${escapeHtml(title)}</a>`
+        : escapeHtml(title);
+
+      return `<tr>
+        <td>${escapeHtml(formatChangelogDate(entry.createdAt, data.settings))}</td>
+        <td><span class="pill ${changelogActionClass(entry.action)}">${escapeHtml(changelogActionLabel(entry.action))}</span></td>
+        <td>${escapeHtml(changelogSourceLabel(entry.source))}</td>
+        <td>${titleHtml}</td>
+        <td>${renderChangeDetails(entry)}</td>
+      </tr>`;
+    })
+    .join("");
+
+  return renderPage(
+    "Changelog",
+    `${messageFromQuery(query)}
+    <section class="hero-panel">
+      <div>
+        <p class="eyebrow">Last 7 Days</p>
+        <h1>Changelog</h1>
+      </div>
+      <div class="hero-meta">
+        <span>${entries.length} entries</span>
+        <span>Auto-pruned after 7 days</span>
+      </div>
+    </section>
+    <section class="panel wide">
+      <div class="section-title">
+        <h2>Recent Changes</h2>
+        <p>Shows series creations, edits, CSV import updates, LiveChart updates, scheduler advances, and deletions from the last 7 days.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Action</th>
+              <th>Source</th>
+              <th>Series</th>
+              <th>Changes</th>
+            </tr>
+          </thead>
+          <tbody>${rows || '<tr><td colspan="5">No changes recorded in the last 7 days.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>`
+  );
+}
+
 function renderSettingsPage(data, discordEnabled, query, channelGroups = [], roleGroups = []) {
   return renderPage(
     "Settings",
@@ -1161,6 +1291,13 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
   );
 
   app.get(
+    "/changelog",
+    asyncRoute(async (req, res) => {
+      res.send(renderChangelogPage(store.snapshot(), req.query));
+    })
+  );
+
+  app.get(
     "/settings",
     asyncRoute(async (req, res) => {
       const [channelGroups, roleGroups] = await Promise.all([
@@ -1373,7 +1510,10 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
       const patch = { ...existing, ...formToSeries(req.body, existing.id) };
       try {
         const saved = await store.upsertSeries(patch);
-        const synced = await syncOneSeriesFromLiveChart(store, saved);
+        const synced = await syncOneSeriesFromLiveChart(store, saved, {
+          overwriteSchedule: true,
+          source: "livechart-sync"
+        });
         const updated = synced.updated || store.getSeries(saved.id) || saved;
         const live = synced.live;
         const parts = [];

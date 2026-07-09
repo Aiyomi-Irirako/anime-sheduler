@@ -38,6 +38,7 @@ For Docker, the web import is usually easier because you can paste or upload the
 - Language version schedules: each enabled language can have its own weekday, time, or manual next date.
 - `Auto-enabled languages`: global settings for language versions found by LiveChart.
 - `LiveChart sync`: updates a single series from its LiveChart schedule link.
+- LiveChart sync overwrites the main release date, weekday, and time when LiveChart exposes an exact timestamp.
 - LiveChart language times: when LiveChart exposes a timestamp for a language version, the bot stores it as that language's next date and release time.
 - `Image URL`: optional poster or cover image used as a small Discord thumbnail. LiveChart sync can fill this automatically when available.
 - `Discord announcement channels`: open a server section, then select one or more text channels the bot can access. Release posts are sent to every selected channel.
@@ -49,9 +50,15 @@ For Docker, the web import is usually easier because you can paste or upload the
 
 The global LiveChart sync intentionally waits between requests to reduce the chance of rate limits.
 
+## Changelog
+
+Open `Changelog` in the top navigation to review series changes from the last 7 days. The list includes manual edits, CSV imports, LiveChart sync updates, scheduler advances after Discord posts, and deleted entries. Older entries are removed automatically.
+
 ## Discord Posting
 
 The scheduler runs continuously while the bot is active.
+
+Before an automatic post is sent for a LiveChart-linked series, the scheduler refreshes that single series from LiveChart and recalculates whether it is still due. If LiveChart moved the episode, updated the episode number, or marked the series finished, the stale post is skipped and the stored entry is updated.
 
 If `REMINDER_MINUTES=0`, the bot posts at release time.
 
