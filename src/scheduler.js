@@ -76,6 +76,98 @@ function collectDueGroups(series, settings, now, postedReleaseKeys) {
   return [...dueGroups.values()].sort((a, b) => a[0].releaseAt.toMillis() - b[0].releaseAt.toMillis());
 }
 
+function releaseEndEpisode(release) {
+  if (Number.isFinite(release?.episodeEnd)) return release.episodeEnd;
+  return Number.isFinite(release?.episode) ? release.episode : null;
+}
+
+function getComparableReleaseAfterSync(series, release, settings, now) {
+  if (release.kind === "language") {
+    const track = enabledLanguageTracks(series).find((item) => item.code === release.languageCode);
+    return track ? getNextLanguageRelease(series, track, settings, now) : null;
+  }
+
+  return getNextRelease(series, settings, now);
+}
+
+function releaseRolledForwardAfterSync(series, release, settings, now) {
+  const postedEnd = releaseEndEpisode(release);
+  if (!Number.isFinite(postedEnd)) return false;
+
+  const nextRelease = getComparableReleaseAfterSync(series, release, settings, now);
+  if (nextRelease && Number.isFinite(nextRelease.episode)) {
+    return nextRelease.episode > postedEnd && !shouldPostRelease(nextRelease, settings, now);
+  }
+
+  if (release.kind === "language") {
+    const track = (series.languageTracks || []).find((item) => item.code === release.languageCode);
+    return !Number.isFinite(track?.nextEpisode) && Number.isFinite(series.episodeCount) && series.episodeCount >= postedEnd;
+  }
+
+  return !Number.isFinite(series.nextEpisode) && Number.isFinite(series.episodeCount) && series.episodeCount >= postedEnd;
+}
+
+function collectRolledForwardGroups(initialGroups, series, settings, now) {
+  return initialGroups
+    .map((group) => group.filter((item) => releaseRolledForwardAfterSync(series, item.release, settings, now)))
+    .filter((group) => group.length);
+}
+
+function mergeDueGroups(groups, settings) {
+  const byKey = new Map();
+
+  for (const group of groups) {
+    for (const item of group) {
+      const key = releaseGroupKey(item.release, settings);
+      if (!key) continue;
+      if (!byKey.has(key)) byKey.set(key, []);
+
+      const target = byKey.get(key);
+      if (target.some((existing) => existing.postKey === item.postKey)) continue;
+      target.push(item);
+    }
+  }
+
+  return [...byKey.values()].sort((a, b) => a[0].releaseAt.toMillis() - b[0].releaseAt.toMillis());
+}
+
+function alreadyAdvancedPastRelease(series, release) {
+  const postedEnd = releaseEndEpisode(release);
+  if (!Number.isFinite(postedEnd)) return false;
+
+  if (release.kind === "language") {
+    const track = (series.languageTracks || []).find((item) => item.code === release.languageCode);
+    return Number.isFinite(track?.nextEpisode) && track.nextEpisode > postedEnd;
+  }
+
+  return Number.isFinite(series.nextEpisode) && series.nextEpisode > postedEnd;
+}
+
+function markPostedWithoutAdvancing(series, release, postKey, now) {
+  if (release.kind === "language") {
+    return {
+      ...series,
+      languageTracks: (series.languageTracks || []).map((track) =>
+        track.code === release.languageCode
+          ? {
+              ...track,
+              lastPostedKey: postKey,
+              lastPostedAt: now.toISO()
+            }
+          : track
+      ),
+      updatedAt: now.toISO()
+    };
+  }
+
+  return {
+    ...series,
+    lastPostedKey: postKey,
+    lastPostedAt: now.toISO(),
+    updatedAt: now.toISO()
+  };
+}
+
 async function refreshLiveChartSeriesBeforePost(store, series) {
   if (!isLiveChartLink(series.scheduleLink)) return { series, refreshed: false };
 
@@ -118,7 +210,9 @@ export async function checkDueAnnouncements(store, discord) {
 
     if (refreshed.refreshed) {
       series = refreshed.series;
-      sortedGroups = collectDueGroups(series, settings, now, postedReleaseKeys);
+      const refreshedGroups = collectDueGroups(series, settings, now, postedReleaseKeys);
+      const rolledForwardGroups = collectRolledForwardGroups(sortedGroups, series, settings, now);
+      sortedGroups = mergeDueGroups([...refreshedGroups, ...rolledForwardGroups], settings);
       if (!sortedGroups.length) continue;
     }
 
@@ -136,7 +230,9 @@ export async function checkDueAnnouncements(store, discord) {
       let advanced = current;
       for (const item of group) {
         advanced =
-          item.release.kind === "language"
+          alreadyAdvancedPastRelease(advanced, item.release)
+            ? markPostedWithoutAdvancing(advanced, item.release, item.postKey, now)
+            : item.release.kind === "language"
             ? advanceLanguageAfterPost(advanced, item.release, item.postKey, now)
             : advanceAfterPost(
                 {
