@@ -8,6 +8,7 @@ const WEEKDAY_BY_KEY = new Map(WEEKDAYS.map((day) => [day.key, day]));
 const WEEKDAY_BY_LABEL = new Map(WEEKDAYS.map((day) => [day.label.toLowerCase(), day]));
 const DEFAULT_MISSING_TIME_POST_TIME = "18:00";
 const FINISHED_SERIES_RETENTION_MONTHS = 1;
+const RELEASE_POST_EXPIRY_HOURS = 6;
 
 export function normalizeReleaseDay(value) {
   const text = cleanString(value).toLowerCase();
@@ -98,6 +99,23 @@ function nextWeekdayDate(dayKey, base) {
   return base.startOf("day").plus({ days: daysUntil });
 }
 
+function pickWeeklyReleaseDateTime(date, time, now) {
+  let releaseDate = date;
+  let dateTime = releaseDate.set(time);
+  const previousDate = releaseDate.minus({ days: 7 });
+  const previousDateTime = previousDate.set(time);
+
+  if (previousDateTime <= now && previousDateTime.plus({ hours: RELEASE_POST_EXPIRY_HOURS }) >= now) {
+    releaseDate = previousDate;
+    dateTime = previousDateTime;
+  } else if (dateTime.plus({ hours: RELEASE_POST_EXPIRY_HOURS }) < now) {
+    releaseDate = releaseDate.plus({ days: 7 });
+    dateTime = releaseDate.set(time);
+  }
+
+  return { date: releaseDate, dateTime };
+}
+
 function weeklyBaseDate(series, now, zone) {
   const premiereDate = normalizeDate(series?.premiereDate);
   if (!premiereDate) return now;
@@ -157,11 +175,9 @@ export function getNextRelease(series, settings, base = DateTime.now()) {
     return { kind: "main", type: "weekly", ...episodePatch, date, dateTime: null, missingTime: true };
   }
 
-  let dateTime = date.set(time);
-  if (dateTime < now.minus({ minutes: 1 })) {
-    date = date.plus({ days: 7 });
-    dateTime = date.set(time);
-  }
+  const picked = pickWeeklyReleaseDateTime(date, time, now);
+  date = picked.date;
+  const dateTime = picked.dateTime;
 
   return { kind: "main", type: "weekly", ...episodePatch, date, dateTime, missingTime: false };
 }
@@ -210,11 +226,9 @@ export function getNextLanguageRelease(series, track, settings, base = DateTime.
     };
   }
 
-  let dateTime = date.set(time);
-  if (dateTime < now.minus({ minutes: 1 })) {
-    date = date.plus({ days: 7 });
-    dateTime = date.set(time);
-  }
+  const picked = pickWeeklyReleaseDateTime(date, time, now);
+  date = picked.date;
+  const dateTime = picked.dateTime;
 
   return {
     kind: "language",
@@ -403,7 +417,7 @@ export function shouldPostRelease(release, settings, base = DateTime.now()) {
   const now = base.setZone(zone);
   const reminderMinutes = Number(settings.reminderMinutes || 0);
   const startsAt = release.missingTime ? postDateTime : postDateTime.minus({ minutes: reminderMinutes });
-  const expiresAt = postDateTime.plus({ hours: 6 });
+  const expiresAt = postDateTime.plus({ hours: RELEASE_POST_EXPIRY_HOURS });
   return now >= startsAt && now <= expiresAt;
 }
 
