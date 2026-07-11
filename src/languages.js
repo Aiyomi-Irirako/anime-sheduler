@@ -159,8 +159,7 @@ export function mergeLanguageTracks(existingTracks, incomingTracks, enabledLangu
         enabled: existing?.enabled || enabledSet.has(code),
         available: incoming?.available ?? existing?.available ?? true,
         nextEpisode: incoming?.nextEpisode ?? existing?.nextEpisode,
-        episodeBatchSize:
-          incoming?.episodeBatchSize > 1 ? incoming.episodeBatchSize : existing?.episodeBatchSize,
+        episodeBatchSize: incoming ? incoming.episodeBatchSize : existing?.episodeBatchSize,
         releaseDay: incoming?.releaseDay || existing?.releaseDay,
         releaseTime: incoming?.releaseTime || existing?.releaseTime,
         nextDate: incoming?.nextDate || existing?.nextDate,

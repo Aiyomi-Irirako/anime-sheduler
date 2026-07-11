@@ -74,9 +74,15 @@ function articleText(article) {
   return decodeHtml(article.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
 }
 
-function articleEpisode(article) {
-  const match = article.match(/data-label="EP(\d+)"/i);
-  return match ? Number.parseInt(match[1], 10) : null;
+function articleEpisodeRange(article) {
+  const label = decodeHtml(article.match(/data-label="([^"]+)"/i)?.[1] || "");
+  const match = label.match(/^EP\s*(\d+)(?:\s*(?:-|[\u2013\u2014])\s*(\d+))?/i);
+  if (!match) return { episode: null, episodeEnd: null };
+
+  const episode = Number.parseInt(match[1], 10);
+  const parsedEnd = Number.parseInt(match[2], 10);
+  const episodeEnd = Number.isFinite(parsedEnd) && parsedEnd >= episode ? Math.min(parsedEnd, episode + 49) : episode;
+  return { episode, episodeEnd };
 }
 
 function articleTimestamp(article) {
@@ -139,10 +145,26 @@ function upcomingItems(items, nowTimestamp) {
   return items.filter((item) => isUpcomingTimestamp(item.timestamp, nowTimestamp));
 }
 
+function preferredLanguageCodes(values = []) {
+  const codes = Array.isArray(values) ? values : [values];
+  return [...new Set(codes.map(normalizeLanguageCode).filter((code) => code && code !== "ja"))];
+}
+
+function matchesPreferredLanguage(item, codes) {
+  return codes.some((code) => item.languageCodes.includes(code));
+}
+
+function selectMainItems(items, preferredCodes) {
+  const subbed = items.filter((item) => item.isSubbed);
+  if (preferredCodes.length) {
+    const preferred = subbed.filter((item) => matchesPreferredLanguage(item, preferredCodes));
+    if (preferred.length) return preferred;
+  }
+  return subbed.length ? subbed : items;
+}
+
 function pickMainRelease(items, nowTimestamp) {
-  const upcoming = upcomingItems(items, nowTimestamp);
-  const subbed = upcoming.filter((item) => item.isSubbed);
-  return pickLowestTimestamp(subbed.length ? subbed : upcoming);
+  return pickLowestTimestamp(upcomingItems(items, nowTimestamp));
 }
 
 function articleServices(text) {
@@ -186,12 +208,12 @@ function sameReleaseBatch(left, right) {
 function episodeBatchSize(items, release, filter = () => true) {
   if (!release || !Number.isFinite(release.episode)) return 1;
 
-  const episodes = new Set(
-    items
-      .filter((item) => sameReleaseBatch(item, release) && filter(item))
-      .map((item) => item.episode)
-      .filter(Number.isFinite)
-  );
+  const episodes = new Set();
+  for (const item of items.filter((entry) => sameReleaseBatch(entry, release) && filter(entry))) {
+    if (!Number.isFinite(item.episode)) continue;
+    const end = Number.isFinite(item.episodeEnd) ? Math.min(item.episodeEnd, item.episode + 49) : item.episode;
+    for (let episode = item.episode; episode <= end; episode += 1) episodes.add(episode);
+  }
 
   let size = 0;
   while (episodes.has(release.episode + size)) size += 1;
@@ -202,11 +224,13 @@ export function parseLiveChartEpisodes(html, options = {}) {
   const nowTimestamp = Number.isFinite(options.nowTimestamp)
     ? options.nowTimestamp
     : Math.floor(Date.now() / 1000);
+  const preferredCodes = preferredLanguageCodes(options.preferredLanguageCodes);
   const articles = html.match(/<article\b[\s\S]*?<\/article>/gi) || [];
   const rows = articles
     .map((article) => {
       const text = articleText(article);
       const title = articleTitle(article);
+      const episodeRange = articleEpisodeRange(article);
       const isDub = /dubbed|dub/i.test(title);
       const isSubbed = /simulcast:\s*sub(?:bed|titled)|\bsub(?:bed|titled)\b/i.test(title);
       const isBroadcastJapan = /broadcast\s*\(japan\)/i.test(title);
@@ -215,7 +239,7 @@ export function parseLiveChartEpisodes(html, options = {}) {
       return {
         title,
         text,
-        episode: articleEpisode(article),
+        ...episodeRange,
         timestamp: articleTimestamp(article),
         languageCodes: articleLanguageCodes(article),
         services: articleServices(text),
@@ -230,10 +254,11 @@ export function parseLiveChartEpisodes(html, options = {}) {
   const parsed = rows.filter((row) => Number.isFinite(row.episode));
 
   const mainItems = parsed.filter((item) => item.isMain);
-  const main = pickMainRelease(mainItems, nowTimestamp);
-  const mainEpisodeBatchSize = episodeBatchSize(upcomingItems(mainItems, nowTimestamp), main);
-  const mainRows = rows.filter((item) => item.isMain);
-  const hasUpcomingMain = upcomingItems(parsed.filter((item) => item.isMain), nowTimestamp).length > 0;
+  const selectedMainItems = selectMainItems(mainItems, preferredCodes);
+  const main = pickMainRelease(selectedMainItems, nowTimestamp);
+  const mainEpisodeBatchSize = episodeBatchSize(upcomingItems(selectedMainItems, nowTimestamp), main);
+  const mainRows = selectMainItems(rows.filter((item) => item.isMain), preferredCodes);
+  const hasUpcomingMain = upcomingItems(selectedMainItems, nowTimestamp).length > 0;
   const mainFinished = !main && mainRows.some((item) => item.isReleased) && !hasUpcomingMain;
   const languageByCode = new Map();
 
@@ -261,6 +286,11 @@ export function parseLiveChartEpisodes(html, options = {}) {
 
   const languageTracks = [...languageByCode.values()].map(({ timestamp, ...track }) => track);
   const germanDub = languageTracks.find((track) => track.code === "de");
+  const serviceRows = preferredCodes.length
+    ? rows.filter(
+        (item) => (item.isMain || item.isDub) && matchesPreferredLanguage(item, preferredCodes)
+      )
+    : rows.filter((item) => item.isMain || item.isDub);
 
   return {
     nextEpisode: main?.episode ?? null,
@@ -268,7 +298,7 @@ export function parseLiveChartEpisodes(html, options = {}) {
     mainReleaseTimestamp: main?.timestamp ?? null,
     dubNextEpisode: germanDub?.nextEpisode ?? null,
     languageTracks,
-    service: mergeServices(rows.filter((item) => item.isMain || item.isDub)),
+    service: mergeServices(serviceRows),
     mainFinished
   };
 }
@@ -291,7 +321,7 @@ async function fetchLiveChartDetails(scheduleLink) {
   };
 }
 
-export async function fetchLiveChartEpisodes(scheduleLink) {
+export async function fetchLiveChartEpisodes(scheduleLink, options = {}) {
   if (!scheduleLink) throw new Error("No LiveChart link is set.");
 
   const response = await fetch(scheduleLink, {
@@ -306,7 +336,7 @@ export async function fetchLiveChartEpisodes(scheduleLink) {
     throw error;
   }
 
-  const live = parseLiveChartEpisodes(await response.text());
+  const live = parseLiveChartEpisodes(await response.text(), options);
   const details = await fetchLiveChartDetails(scheduleLink).catch(() => ({ imageUrl: "", episodeCount: null }));
   return { ...live, ...details };
 }
