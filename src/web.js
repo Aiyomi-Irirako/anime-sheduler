@@ -447,7 +447,7 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
       <input type="checkbox" name="enabledLanguageCodes" value="${escapeHtml(language.code)}" ${
         enabledLanguages.has(language.code) ? "checked" : ""
       }>
-      <span>${escapeHtml(language.label)}</span>
+      <span>${escapeHtml(language.label)} dub</span>
     </label>`
   ).join("");
 
@@ -498,11 +498,11 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
 
   const languageFields = `<div class="settings-language-panel">
         <label>
-          <span>Preferred schedule language</span>
+          <span>Main subtitle schedule</span>
           <select name="preferredScheduleLanguage">${scheduleLanguageOptions}</select>
         </label>
         <div>
-          <span class="field-label">Auto-enabled language versions</span>
+          <span class="field-label">Automatically enabled dubs</span>
           <div class="language-settings-grid">${languageOptions}</div>
         </div>
       </div>`;
@@ -517,7 +517,7 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
       ${renderSettingsTab("mentions", "Mentions", "Role pings per release type")}
       ${renderSettingsTab("schedule", "Scheduler", "Timing and summaries")}
       ${renderSettingsTab("livechart", "LiveChart", "Daily sync controls")}
-      ${renderSettingsTab("languages", "Languages", "Schedule and language versions")}
+      ${renderSettingsTab("languages", "Languages", "Subtitle schedule and dubs")}
       ${renderSettingsTab("import", "Import", "CSV season updates")}
       ${renderSettingsTab("backup", "Backup", "Export and restore data")}
     </aside>
@@ -527,7 +527,7 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
         ${renderSettingsSection("mentions", "Discord", "Role Mentions", "Pick role pings for main releases, language versions, and missing-time fallback posts.", renderDiscordRoleSettings(settings, roleGroups, discordEnabled))}
         ${renderSettingsSection("schedule", "Timing", "Scheduler", "Control release timing, reminder behavior, and Discord summary sizes.", scheduleFields)}
         ${renderSettingsSection("livechart", "Sync", "LiveChart", "Run the daily LiveChart refresh and inspect the latest sync status.", liveChartFields)}
-        ${renderSettingsSection("languages", "Languages", "Language Settings", "Set the main LiveChart schedule language and choose automatically enabled language versions.", languageFields)}
+        ${renderSettingsSection("languages", "Languages", "Subtitles and Dubs", "Choose the main subtitle schedule and dubbed versions independently.", languageFields)}
         <div class="settings-savebar" data-settings-savebar>
           <span>Changes apply after saving.</span>
           <button type="submit">Save settings</button>
@@ -1081,7 +1081,7 @@ function renderLanguageTrackSettings(series) {
         <input type="hidden" name="languageAvailable_${escapeHtml(key)}" value="${track.available ? "1" : "0"}">
         <label class="check">
           <input type="checkbox" name="languageEnabled_${escapeHtml(key)}" ${toFormBoolean(track.enabled)}>
-          <span>${escapeHtml(track.label)}</span>
+          <span>${escapeHtml(track.label)} dub</span>
         </label>
         <span class="language-short">${escapeHtml(languageShortLabel(normalized))}</span>
         <input type="number" min="0" name="languageEpisode_${escapeHtml(key)}" value="${
@@ -1098,8 +1098,8 @@ function renderLanguageTrackSettings(series) {
 
   return `<div class="span-2 language-tracks">
     <div class="section-title compact">
-      <h2>Language Versions</h2>
-      <p>Enable language versions that should appear in Discord posts with their own episode number.</p>
+      <h2>Dub Versions</h2>
+      <p>Enable dubbed versions that should appear in Discord posts with their own episode number.</p>
     </div>
     <div class="language-track-grid">${rows}</div>
   </div>`;
