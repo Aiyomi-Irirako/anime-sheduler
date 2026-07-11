@@ -1,6 +1,6 @@
 {
   "name": "anime-sheduler",
-  "version": "1.3.8",
+  "version": "1.3.9",
   "description": "Discord bot with a web panel for anime release schedules, LiveChart sync, and language-version tracking.",
   "type": "module",
   "private": true,
@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "import": "node src/cli-import.js"
+    "import": "node src/cli-import.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"

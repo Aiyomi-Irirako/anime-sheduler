@@ -13,11 +13,18 @@ export function isLiveChartLink(value) {
   return typeof value === "string" && value.includes("livechart.me/anime/");
 }
 
+function parseLiveTimestamp(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0 || timestamp === Number.MAX_SAFE_INTEGER) return null;
+  return timestamp;
+}
+
 export function prepareLiveLanguageTracks(liveTracks = [], settings = {}) {
   const zone = settings.timeZone || "Europe/Berlin";
   return (Array.isArray(liveTracks) ? liveTracks : []).map((track) => {
-    const timestamp = Number(track.releaseTimestamp);
-    if (!Number.isFinite(timestamp) || timestamp === Number.MAX_SAFE_INTEGER) return track;
+    const timestamp = parseLiveTimestamp(track.releaseTimestamp);
+    if (timestamp === null) return track;
 
     const releaseAt = DateTime.fromMillis(timestamp * 1000, { zone: "utc" }).setZone(zone);
     if (!releaseAt.isValid) return track;
@@ -30,9 +37,9 @@ export function prepareLiveLanguageTracks(liveTracks = [], settings = {}) {
   });
 }
 
-function prepareLiveMainSchedule(live = {}, settings = {}) {
-  const timestamp = Number(live.mainReleaseTimestamp);
-  if (!Number.isFinite(timestamp) || timestamp === Number.MAX_SAFE_INTEGER) return {};
+export function prepareLiveMainSchedule(live = {}, settings = {}) {
+  const timestamp = parseLiveTimestamp(live.mainReleaseTimestamp);
+  if (timestamp === null) return {};
 
   const zone = settings.timeZone || "Europe/Berlin";
   const releaseAt = DateTime.fromMillis(timestamp * 1000, { zone: "utc" }).setZone(zone);
@@ -79,8 +86,10 @@ function hasChanged(series, patch) {
 }
 
 export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
-  const live = await fetchLiveChartEpisodes(series.scheduleLink);
   const settings = store.getSettings();
+  const live = await fetchLiveChartEpisodes(series.scheduleLink, {
+    preferredLanguageCodes: settings.enabledLanguageCodes || []
+  });
   const overwriteSchedule = Boolean(options.overwriteSchedule);
   const liveMainSchedule = overwriteSchedule ? prepareLiveMainSchedule(live, settings) : {};
   const liveLanguageTracks = prepareLiveLanguageTracks(live.languageTracks || [], settings);
@@ -90,7 +99,12 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
     settings.enabledLanguageCodes || []
   );
   const nextEpisode = Number.isFinite(live.nextEpisode) ? live.nextEpisode : live.mainFinished ? null : series.nextEpisode;
-  const episodeBatchSize = live.episodeBatchSize > 1 ? live.episodeBatchSize : series.episodeBatchSize;
+  const episodeBatchSize =
+    overwriteSchedule && Number.isFinite(live.nextEpisode)
+      ? live.episodeBatchSize
+      : live.episodeBatchSize > 1
+        ? live.episodeBatchSize
+        : series.episodeBatchSize;
   const episodeCount = Number.isFinite(live.episodeCount) ? live.episodeCount : series.episodeCount;
   const hasMainEpisode = Number.isFinite(nextEpisode);
   const hasLanguageEpisode = languageTracks.some((track) => track.enabled && Number.isFinite(track.nextEpisode));
