@@ -86,6 +86,91 @@ test("parses episode ranges and keeps only German services", () => {
   assert.equal(parsed.service, "Aniverse");
 });
 
+test("automatic mode uses the earliest subtitle release without merging regional services", () => {
+  const html = [
+    article({
+      label: "EP4",
+      timestamp: 1785000000,
+      title: "Simulcast: Subbed",
+      languages: { ja: ["JA"], en: ["EN"] },
+      service: "Crunchyroll"
+    }),
+    article({
+      label: "EP4",
+      timestamp: 1785086400,
+      title: "Simulcast: Subbed",
+      languages: { ja: ["JA"], de: ["DE"] },
+      service: "aniverse Channel"
+    }),
+    article({
+      label: "EP4",
+      timestamp: 1785000000,
+      title: "Simulcast: Subbed",
+      languages: { ja: ["JA"], fr: ["FR"] },
+      service: "Animation Digital Network"
+    })
+  ].join("");
+
+  const parsed = parseLiveChartEpisodes(html, { nowTimestamp: 1784900000 });
+
+  assert.equal(parsed.mainReleaseTimestamp, 1785000000);
+  assert.equal(parsed.service, "Crunchyroll");
+});
+
+test("falls back to the earliest subtitle release when the preferred language is unavailable", () => {
+  const html = [
+    article({
+      label: "EP4",
+      timestamp: 1785000000,
+      title: "Simulcast: Subbed",
+      languages: { ja: ["JA"], en: ["EN"] },
+      service: "Crunchyroll"
+    }),
+    article({
+      label: "EP4",
+      timestamp: 1785086400,
+      title: "Simulcast: Subbed",
+      languages: { ja: ["JA"], de: ["DE"] },
+      service: "aniverse Channel"
+    })
+  ].join("");
+
+  const parsed = parseLiveChartEpisodes(html, {
+    nowTimestamp: 1784900000,
+    preferredLanguageCodes: ["fr"]
+  });
+
+  assert.equal(parsed.mainReleaseTimestamp, 1785000000);
+  assert.equal(parsed.service, "Crunchyroll");
+});
+
+test("matches LiveChart Spanish schedule codes to the public Spanish option", () => {
+  const html = [
+    article({
+      label: "EP4",
+      timestamp: 1785000000,
+      title: "Simulcast: Subbed",
+      languages: { ja: ["JA"], en: ["EN"] },
+      service: "Crunchyroll"
+    }),
+    article({
+      label: "EP4",
+      timestamp: 1785086400,
+      title: "Simulcast: Subbed",
+      languages: { ja: ["JA"], "es-es": ["ES (ES)"] },
+      service: "AnimeBox"
+    })
+  ].join("");
+
+  const parsed = parseLiveChartEpisodes(html, {
+    nowTimestamp: 1784900000,
+    preferredLanguageCodes: ["es"]
+  });
+
+  assert.equal(parsed.mainReleaseTimestamp, 1785086400);
+  assert.equal(parsed.service, "AnimeBox");
+});
+
 test("does not turn a missing LiveChart timestamp into the Unix epoch", () => {
   assert.deepEqual(
     prepareLiveMainSchedule(

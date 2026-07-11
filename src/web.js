@@ -23,7 +23,8 @@ import {
   languageShortLabel,
   normalizeEnabledLanguageCodes,
   normalizeLanguageCode,
-  normalizeLanguageTracks
+  normalizeLanguageTracks,
+  normalizePreferredScheduleLanguage
 } from "./languages.js";
 import { normalizePreferredService, pickPreferredService, serviceStyle, splitServiceNames } from "./services.js";
 
@@ -432,6 +433,15 @@ function renderSettingsScript() {
 
 function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups = [], dataStats = {}) {
   const enabledLanguages = new Set(normalizeEnabledLanguageCodes(settings.enabledLanguageCodes || ["de"]));
+  const preferredScheduleLanguage = normalizePreferredScheduleLanguage(settings.preferredScheduleLanguage);
+  const scheduleLanguageOptions = [
+    `<option value="" ${preferredScheduleLanguage ? "" : "selected"}>Automatic</option>`,
+    ...LANGUAGE_OPTIONS.map(
+      (language) => `<option value="${escapeHtml(language.code)}" ${
+        preferredScheduleLanguage === language.code ? "selected" : ""
+      }>${escapeHtml(language.label)}</option>`
+    )
+  ].join("");
   const languageOptions = LANGUAGE_OPTIONS.map(
     (language) => `<label class="check language-option">
       <input type="checkbox" name="enabledLanguageCodes" value="${escapeHtml(language.code)}" ${
@@ -482,13 +492,19 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
         <input value="${escapeHtml(formatSyncStatus(settings))}" readonly>
       </label>
       <div class="form-actions span-2">
-        <button type="submit" class="button secondary" form="liveChartSyncForm">Sync LiveChart now</button>
+        <button type="submit" class="button secondary" name="settingsAction" value="sync-livechart">Sync LiveChart now</button>
       </div>
     </div>`;
 
   const languageFields = `<div class="settings-language-panel">
-        <span class="field-label">Auto-enabled languages</span>
-        <div class="language-settings-grid">${languageOptions}</div>
+        <label>
+          <span>Preferred schedule language</span>
+          <select name="preferredScheduleLanguage">${scheduleLanguageOptions}</select>
+        </label>
+        <div>
+          <span class="field-label">Auto-enabled language versions</span>
+          <div class="language-settings-grid">${languageOptions}</div>
+        </div>
       </div>`;
 
   return `<section class="settings-console">
@@ -501,7 +517,7 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
       ${renderSettingsTab("mentions", "Mentions", "Role pings per release type")}
       ${renderSettingsTab("schedule", "Scheduler", "Timing and summaries")}
       ${renderSettingsTab("livechart", "LiveChart", "Daily sync controls")}
-      ${renderSettingsTab("languages", "Languages", "Auto-enabled dub tracks")}
+      ${renderSettingsTab("languages", "Languages", "Schedule and language versions")}
       ${renderSettingsTab("import", "Import", "CSV season updates")}
       ${renderSettingsTab("backup", "Backup", "Export and restore data")}
     </aside>
@@ -511,7 +527,7 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
         ${renderSettingsSection("mentions", "Discord", "Role Mentions", "Pick role pings for main releases, language versions, and missing-time fallback posts.", renderDiscordRoleSettings(settings, roleGroups, discordEnabled))}
         ${renderSettingsSection("schedule", "Timing", "Scheduler", "Control release timing, reminder behavior, and Discord summary sizes.", scheduleFields)}
         ${renderSettingsSection("livechart", "Sync", "LiveChart", "Run the daily LiveChart refresh and inspect the latest sync status.", liveChartFields)}
-        ${renderSettingsSection("languages", "Languages", "Language Versions", "Choose which LiveChart language versions should be enabled automatically when found.", languageFields)}
+        ${renderSettingsSection("languages", "Languages", "Language Settings", "Set the main LiveChart schedule language and choose automatically enabled language versions.", languageFields)}
         <div class="settings-savebar" data-settings-savebar>
           <span>Changes apply after saving.</span>
           <button type="submit">Save settings</button>
@@ -519,7 +535,6 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
       </form>
       ${renderImportPanel()}
       ${renderBackupPanel(dataStats)}
-      <form id="liveChartSyncForm" class="hidden-form" method="post" action="/sync-livechart-all"></form>
     </div>
   </section>
   ${renderSettingsScript()}`;
@@ -1318,6 +1333,14 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
     "/settings",
     asyncRoute(async (req, res) => {
       await store.updateSettings(req.body);
+      if (cleanString(req.body.settingsAction) === "sync-livechart") {
+        try {
+          const result = await syncAllLiveChart(store);
+          return redirectToSettings(res, "livechart", "ok", `Settings saved. LiveChart sync: ${result.summary}`);
+        } catch (error) {
+          return redirectToSettings(res, "livechart", "error", error.message);
+        }
+      }
       res.redirect("/settings?ok=Settings saved");
     })
   );
