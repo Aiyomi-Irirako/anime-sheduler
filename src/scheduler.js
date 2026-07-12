@@ -111,6 +111,7 @@ function getComparableReleaseAfterSync(series, release, settings, now) {
 function releaseRolledForwardAfterSync(series, release, settings, now, live = {}) {
   const postedEnd = releaseEndEpisode(release);
   if (!Number.isFinite(postedEnd)) return false;
+  if (release.kind !== "language" && live.preferredReleaseFinished) return false;
   if (release.kind !== "language" && live.mainFinished && mainReleaseAlreadyCompleted(series, release)) return false;
 
   const nextRelease = getComparableReleaseAfterSync(series, release, settings, now);

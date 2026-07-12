@@ -161,3 +161,76 @@ test("preserves an unposted final original episode when LiveChart just finished"
   assert.equal(fields.Version, "Original");
   assert.equal(fields.Episode, "Episode 12");
 });
+
+test("drops an unpreferred Japanese broadcast after a preferred batch release finished", async () => {
+  const now = DateTime.fromISO("2026-07-12T16:30:00", { zone: "Europe/Berlin" });
+  const settings = {
+    timeZone: "Europe/Berlin",
+    reminderMinutes: 0,
+    missingTimePostTime: "18:00",
+    discordReleaseRoleIds: [],
+    discordLanguageRoleIds: [],
+    discordMissingTimeRoleIds: []
+  };
+  let currentSeries = {
+    id: "baki-dou",
+    title: "BAKI-DOU: The Invincible Samurai",
+    service: "Netflix",
+    preferredService: "",
+    scheduleLink: "https://www.livechart.me/anime/12621/schedules",
+    imageUrl: "",
+    note: "",
+    enabled: true,
+    status: "airing",
+    weekly: true,
+    releaseDay: "sunday",
+    releaseTime: "16:30",
+    nextDate: "2026-07-12",
+    nextEpisode: 3,
+    episodeBatchSize: 1,
+    episodeCount: 25,
+    lastPostedKey: "baki-dou:main:2:release-time:2026-07-05T16:30:00.000+02:00",
+    languageTracks: []
+  };
+  const messages = [];
+  const store = {
+    snapshot() {
+      return { settings: structuredClone(settings), series: [structuredClone(currentSeries)] };
+    },
+    getSeries(id) {
+      return id === currentSeries.id ? currentSeries : null;
+    },
+    async replaceSeries(id, next) {
+      assert.equal(id, currentSeries.id);
+      currentSeries = next;
+      return next;
+    },
+    async addPostLog() {}
+  };
+  const discord = {
+    enabled: true,
+    ready: true,
+    async post(message) {
+      messages.push(message);
+    }
+  };
+  const syncSeries = async () => {
+    currentSeries = {
+      ...currentSeries,
+      status: "finished",
+      enabled: false,
+      nextEpisode: null,
+      nextDate: ""
+    };
+    return {
+      changed: true,
+      updated: currentSeries,
+      live: { mainFinished: true, preferredReleaseFinished: true }
+    };
+  };
+
+  const result = await checkDueAnnouncements(store, discord, { now, syncSeries });
+
+  assert.equal(result.posted, 0);
+  assert.equal(messages.length, 0);
+});

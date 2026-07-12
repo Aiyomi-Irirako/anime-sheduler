@@ -86,6 +86,39 @@ test("parses episode ranges and keeps only German services", () => {
   assert.equal(parsed.service, "Aniverse");
 });
 
+test("does not fall back to a Japanese broadcast after the preferred streaming release finished", () => {
+  const html = [
+    article({
+      label: "",
+      timestamp: "",
+      title: "Streaming: Dubbed, Subbed",
+      languages: { de: ["DE"], en: ["EN"], ja: ["JA"] },
+      service: "Netflix",
+      released: true
+    }),
+    article({
+      label: "EP3",
+      timestamp: 1784471400,
+      title: "Broadcast (Japan)",
+      languages: { ja: ["JA"] },
+      service: ""
+    })
+  ].join("");
+
+  const german = parseLiveChartEpisodes(html, {
+    nowTimestamp: 1784300000,
+    preferredLanguageCodes: ["de"]
+  });
+  const automatic = parseLiveChartEpisodes(html, { nowTimestamp: 1784300000 });
+
+  assert.equal(german.nextEpisode, null);
+  assert.equal(german.mainFinished, true);
+  assert.equal(german.preferredReleaseFinished, true);
+  assert.equal(german.service, "Netflix");
+  assert.equal(automatic.nextEpisode, 3);
+  assert.equal(automatic.mainFinished, false);
+});
+
 test("automatic mode uses the earliest subtitle release without merging regional services", () => {
   const html = [
     article({
