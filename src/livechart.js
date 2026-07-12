@@ -156,11 +156,11 @@ function matchesPreferredLanguage(item, codes) {
   return codes.some((code) => item.languageCodes.includes(code));
 }
 
-function selectMainItems(items, preferredCodes) {
+function selectMainItems(items, preferredCodes, lockToPreferred = false) {
   const subbed = items.filter((item) => item.isSubbed);
   if (preferredCodes.length) {
     const preferred = subbed.filter((item) => matchesPreferredLanguage(item, preferredCodes));
-    if (preferred.length) return preferred;
+    if (preferred.length || lockToPreferred) return preferred;
   }
   return subbed.length ? subbed : items;
 }
@@ -256,12 +256,21 @@ export function parseLiveChartEpisodes(html, options = {}) {
   const parsed = rows.filter((row) => Number.isFinite(row.episode));
 
   const mainItems = parsed.filter((item) => item.isMain);
-  const selectedMainItems = selectMainItems(mainItems, preferredCodes);
+  const allMainRows = rows.filter((item) => item.isMain);
+  const preferredMainRows = preferredCodes.length
+    ? allMainRows.filter((item) => item.isSubbed && matchesPreferredLanguage(item, preferredCodes))
+    : [];
+  const lockToPreferred = preferredMainRows.length > 0;
+  const selectedMainItems = selectMainItems(mainItems, preferredCodes, lockToPreferred);
   const main = pickMainRelease(selectedMainItems, nowTimestamp);
   const mainEpisodeBatchSize = episodeBatchSize(upcomingItems(selectedMainItems, nowTimestamp), main);
-  const mainRows = selectMainItems(rows.filter((item) => item.isMain), preferredCodes);
+  const mainRows = lockToPreferred ? preferredMainRows : selectMainItems(allMainRows, preferredCodes);
   const hasUpcomingMain = upcomingItems(selectedMainItems, nowTimestamp).length > 0;
   const mainFinished = !main && mainRows.some((item) => item.isReleased) && !hasUpcomingMain;
+  const preferredReleaseFinished =
+    lockToPreferred &&
+    preferredMainRows.some((item) => item.isReleased) &&
+    !mainItems.some((item) => item.isSubbed && matchesPreferredLanguage(item, preferredCodes));
   const languageByCode = new Map();
 
   for (const item of upcomingItems(parsed.filter((entry) => entry.isDub), nowTimestamp)) {
@@ -300,7 +309,8 @@ export function parseLiveChartEpisodes(html, options = {}) {
     dubNextEpisode: germanDub?.nextEpisode ?? null,
     languageTracks,
     service: mergeServices(serviceRows),
-    mainFinished
+    mainFinished,
+    preferredReleaseFinished
   };
 }
 
