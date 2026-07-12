@@ -81,6 +81,24 @@ function releaseEndEpisode(release) {
   return Number.isFinite(release?.episode) ? release.episode : null;
 }
 
+function postedMainEpisodeRange(series) {
+  const match = cleanString(series?.lastPostedKey).match(/:main:(\d+)(?:-(\d+))?:/);
+  if (!match) return null;
+
+  const start = Number.parseInt(match[1], 10);
+  const end = Number.parseInt(match[2] || match[1], 10);
+  return Number.isFinite(start) && Number.isFinite(end) ? { start, end } : null;
+}
+
+function mainReleaseAlreadyCompleted(series, release) {
+  if (!Number.isFinite(release?.episode)) return true;
+  if (Number.isFinite(series?.episodeCount) && release.episode > series.episodeCount) return true;
+
+  const posted = postedMainEpisodeRange(series);
+  const releaseEnd = releaseEndEpisode(release);
+  return Boolean(posted && Number.isFinite(releaseEnd) && release.episode >= posted.start && releaseEnd <= posted.end);
+}
+
 function getComparableReleaseAfterSync(series, release, settings, now) {
   if (release.kind === "language") {
     const track = enabledLanguageTracks(series).find((item) => item.code === release.languageCode);
@@ -90,9 +108,10 @@ function getComparableReleaseAfterSync(series, release, settings, now) {
   return getNextRelease(series, settings, now);
 }
 
-function releaseRolledForwardAfterSync(series, release, settings, now) {
+function releaseRolledForwardAfterSync(series, release, settings, now, live = {}) {
   const postedEnd = releaseEndEpisode(release);
   if (!Number.isFinite(postedEnd)) return false;
+  if (release.kind !== "language" && live.mainFinished && mainReleaseAlreadyCompleted(series, release)) return false;
 
   const nextRelease = getComparableReleaseAfterSync(series, release, settings, now);
   if (nextRelease && Number.isFinite(nextRelease.episode)) {
@@ -107,9 +126,9 @@ function releaseRolledForwardAfterSync(series, release, settings, now) {
   return !Number.isFinite(series.nextEpisode) && Number.isFinite(series.episodeCount) && series.episodeCount >= postedEnd;
 }
 
-function collectRolledForwardGroups(initialGroups, series, settings, now) {
+function collectRolledForwardGroups(initialGroups, series, settings, now, live = {}) {
   return initialGroups
-    .map((group) => group.filter((item) => releaseRolledForwardAfterSync(series, item.release, settings, now)))
+    .map((group) => group.filter((item) => releaseRolledForwardAfterSync(series, item.release, settings, now, live)))
     .filter((group) => group.length);
 }
 
@@ -168,18 +187,19 @@ function markPostedWithoutAdvancing(series, release, postKey, now) {
   };
 }
 
-async function refreshLiveChartSeriesBeforePost(store, series) {
+async function refreshLiveChartSeriesBeforePost(store, series, syncSeries = syncOneSeriesFromLiveChart) {
   if (!isLiveChartLink(series.scheduleLink)) return { series, refreshed: false };
 
   const current = store.getSeries(series.id);
   if (!current) return { series: null, refreshed: false };
 
   try {
-    const synced = await syncOneSeriesFromLiveChart(store, current, { overwriteSchedule: true });
+    const synced = await syncSeries(store, current, { overwriteSchedule: true });
     return {
       series: synced.updated || store.getSeries(current.id) || current,
       refreshed: true,
-      changed: synced.changed
+      changed: synced.changed,
+      live: synced.live || {}
     };
   } catch (error) {
     console.warn(`Pre-post LiveChart sync failed for "${current.title}": ${error.stack || error.message}`);
@@ -187,12 +207,12 @@ async function refreshLiveChartSeriesBeforePost(store, series) {
   }
 }
 
-export async function checkDueAnnouncements(store, discord) {
+export async function checkDueAnnouncements(store, discord, options = {}) {
   if (!discord.enabled || !discord.ready) return { posted: 0, skipped: 0, reason: "discord_not_ready" };
 
   const data = store.snapshot();
   const settings = data.settings;
-  const now = DateTime.now().setZone(settings.timeZone || "Europe/Berlin");
+  const now = (options.now || DateTime.now()).setZone(settings.timeZone || "Europe/Berlin");
   const postedReleaseKeys = new Set();
   let posted = 0;
   let skipped = 0;
@@ -202,7 +222,7 @@ export async function checkDueAnnouncements(store, discord) {
     let sortedGroups = collectDueGroups(series, settings, now, postedReleaseKeys);
     if (!sortedGroups.length) continue;
 
-    const refreshed = await refreshLiveChartSeriesBeforePost(store, series);
+    const refreshed = await refreshLiveChartSeriesBeforePost(store, series, options.syncSeries);
     if (!refreshed.series) {
       skipped += sortedGroups.length;
       continue;
@@ -211,7 +231,7 @@ export async function checkDueAnnouncements(store, discord) {
     if (refreshed.refreshed) {
       series = refreshed.series;
       const refreshedGroups = collectDueGroups(series, settings, now, postedReleaseKeys);
-      const rolledForwardGroups = collectRolledForwardGroups(sortedGroups, series, settings, now);
+      const rolledForwardGroups = collectRolledForwardGroups(sortedGroups, series, settings, now, refreshed.live);
       sortedGroups = mergeDueGroups([...refreshedGroups, ...rolledForwardGroups], settings);
       if (!sortedGroups.length) continue;
     }

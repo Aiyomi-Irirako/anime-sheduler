@@ -1,6 +1,10 @@
 import { DateTime } from "luxon";
 import { fetchLiveChartEpisodes } from "./livechart.js";
-import { mergeLanguageTracks, normalizeLanguageTracks } from "./languages.js";
+import {
+  mergeLanguageTracks,
+  normalizeLanguageTracks,
+  normalizePreferredScheduleLanguage
+} from "./languages.js";
 import { shouldDeleteFinishedSeries } from "./schedule.js";
 
 const WEEKDAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
@@ -87,8 +91,9 @@ function hasChanged(series, patch) {
 
 export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
   const settings = store.getSettings();
+  const preferredScheduleLanguage = normalizePreferredScheduleLanguage(settings.preferredScheduleLanguage);
   const live = await fetchLiveChartEpisodes(series.scheduleLink, {
-    preferredLanguageCodes: settings.enabledLanguageCodes || []
+    preferredLanguageCodes: preferredScheduleLanguage ? [preferredScheduleLanguage] : []
   });
   const overwriteSchedule = Boolean(options.overwriteSchedule);
   const liveMainSchedule = overwriteSchedule ? prepareLiveMainSchedule(live, settings) : {};

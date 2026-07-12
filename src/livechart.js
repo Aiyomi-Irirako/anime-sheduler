@@ -127,6 +127,8 @@ const SERVICE_PATTERNS = [
   [/\bDisney\+/i, "Disney+"],
   [/\bHulu\b/i, "Hulu"],
   [/\bBilibili\b/i, "Bilibili"],
+  [/\bAnimeBox\b/i, "AnimeBox"],
+  [/\bAni-One(?:\s+Asia)?\b/i, "Ani-One"],
   [/\bApple TV\+/i, "Apple TV+"],
   [/\bMax\b/i, "Max"]
 ];
@@ -286,11 +288,10 @@ export function parseLiveChartEpisodes(html, options = {}) {
 
   const languageTracks = [...languageByCode.values()].map(({ timestamp, ...track }) => track);
   const germanDub = languageTracks.find((track) => track.code === "de");
-  const serviceRows = preferredCodes.length
-    ? rows.filter(
-        (item) => (item.isMain || item.isDub) && matchesPreferredLanguage(item, preferredCodes)
-      )
-    : rows.filter((item) => item.isMain || item.isDub);
+  const preferredServiceRows = preferredCodes.length
+    ? rows.filter((item) => (item.isMain || item.isDub) && matchesPreferredLanguage(item, preferredCodes))
+    : [];
+  const serviceRows = preferredServiceRows.length ? preferredServiceRows : main ? [main] : [];
 
   return {
     nextEpisode: main?.episode ?? null,

@@ -29,6 +29,7 @@ export function normalizeLanguageCode(value) {
   const code = cleanString(value).toLowerCase().replaceAll("_", "-");
   if (!code) return "";
   if (code === "pt") return "pt-br";
+  if (code === "es-es") return "es";
   if (code === "zh-cn") return "zh-hans";
   if (code === "zh-tw") return "zh-hant";
   return code;
@@ -52,6 +53,11 @@ export function languageShortLabel(code) {
 
 export function isSupportedLanguage(code) {
   return LANGUAGE_BY_CODE.has(normalizeLanguageCode(code));
+}
+
+export function normalizePreferredScheduleLanguage(value) {
+  const code = normalizeLanguageCode(value);
+  return isSupportedLanguage(code) ? code : "";
 }
 
 export function normalizeEnabledLanguageCodes(value) {

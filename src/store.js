@@ -16,7 +16,8 @@ import {
 import { isSeriesComplete, normalizeReleaseDay } from "./schedule.js";
 import {
   normalizeEnabledLanguageCodes,
-  normalizeLanguageTracks
+  normalizeLanguageTracks,
+  normalizePreferredScheduleLanguage
 } from "./languages.js";
 import { normalizePreferredService, normalizeServiceList } from "./services.js";
 
@@ -54,6 +55,7 @@ const DEFAULT_DATA = {
     missingTimePostTime: normalizeTime(process.env.MISSING_TIME_POST_TIME) || "18:00",
     liveChartSyncEnabled: true,
     liveChartSyncHour: 5,
+    preferredScheduleLanguage: "de",
     enabledLanguageCodes: ["de"],
     lastLiveChartSyncAt: "",
     lastLiveChartSyncSummary: ""
@@ -242,6 +244,13 @@ function normalizeStoreData(input = {}) {
       ? data.settings.discordMissingTimeRoleIds
       : data.settings.discordMissingTimeRoleId || process.env.DISCORD_MISSING_TIME_ROLE_ID
   );
+  data.settings.enabledLanguageCodes = normalizeEnabledLanguageCodes(data.settings.enabledLanguageCodes);
+  data.settings.preferredScheduleLanguage = Object.prototype.hasOwnProperty.call(
+    settingsSource,
+    "preferredScheduleLanguage"
+  )
+    ? normalizePreferredScheduleLanguage(settingsSource.preferredScheduleLanguage)
+    : data.settings.enabledLanguageCodes[0] || "";
   data.series = Array.isArray(data.series) ? data.series.map((item) => normalizeSeries(item, item)) : [];
   data.posts = Array.isArray(data.posts) ? data.posts : [];
   data.changeLog = pruneChangeLog(data.changeLog)
@@ -463,6 +472,10 @@ export class Store {
       missingTimePostTime: normalizeTime(patch.missingTimePostTime) || this.data.settings.missingTimePostTime || "18:00",
       liveChartSyncEnabled: parseBoolean(patch.liveChartSyncEnabled),
       liveChartSyncHour: Math.min(23, Math.max(0, parseInteger(patch.liveChartSyncHour) ?? 5)),
+      preferredScheduleLanguage:
+        patch.preferredScheduleLanguage === undefined
+          ? this.data.settings.preferredScheduleLanguage
+          : normalizePreferredScheduleLanguage(patch.preferredScheduleLanguage),
       enabledLanguageCodes: normalizeEnabledLanguageCodes(patch.enabledLanguageCodes)
     };
     await this.save();
