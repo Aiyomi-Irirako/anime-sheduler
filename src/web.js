@@ -432,7 +432,8 @@ function renderSettingsScript() {
 }
 
 function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups = [], dataStats = {}) {
-  const enabledLanguages = new Set(normalizeEnabledLanguageCodes(settings.enabledLanguageCodes || ["de"]));
+  const enabledLanguages = normalizeEnabledLanguageCodes(settings.enabledLanguageCodes || ["de"]);
+  const enabledDubLanguage = enabledLanguages[0] || "";
   const preferredScheduleLanguage = normalizePreferredScheduleLanguage(settings.preferredScheduleLanguage);
   const scheduleLanguageOptions = [
     `<option value="" ${preferredScheduleLanguage ? "" : "selected"}>Automatic</option>`,
@@ -442,14 +443,14 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
       }>${escapeHtml(language.label)}</option>`
     )
   ].join("");
-  const languageOptions = LANGUAGE_OPTIONS.map(
-    (language) => `<label class="check language-option">
-      <input type="checkbox" name="enabledLanguageCodes" value="${escapeHtml(language.code)}" ${
-        enabledLanguages.has(language.code) ? "checked" : ""
-      }>
-      <span>${escapeHtml(language.label)} dub</span>
-    </label>`
-  ).join("");
+  const dubLanguageOptions = [
+    `<option value="" ${enabledDubLanguage ? "" : "selected"}>None</option>`,
+    ...LANGUAGE_OPTIONS.map(
+      (language) => `<option value="${escapeHtml(language.code)}" ${
+        enabledDubLanguage === language.code ? "selected" : ""
+      }>${escapeHtml(language.label)}</option>`
+    )
+  ].join("");
 
   const scheduleFields = `<div class="grid-form settings-field-grid">
     <label>
@@ -501,10 +502,10 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
           <span>Main subtitle schedule</span>
           <select name="preferredScheduleLanguage">${scheduleLanguageOptions}</select>
         </label>
-        <div>
-          <span class="field-label">Automatically enabled dubs</span>
-          <div class="language-settings-grid">${languageOptions}</div>
-        </div>
+        <label>
+          <span>Automatically enabled dub</span>
+          <select name="enabledLanguageCodes">${dubLanguageOptions}</select>
+        </label>
       </div>`;
 
   return `<section class="settings-console">

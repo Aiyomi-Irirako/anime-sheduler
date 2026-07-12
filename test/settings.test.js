@@ -27,10 +27,11 @@ test("migrates and persists the preferred schedule language independently", asyn
 
     await store.updateSettings({
       ...store.getSettings(),
-      preferredScheduleLanguage: "en"
+      preferredScheduleLanguage: "en",
+      enabledLanguageCodes: "de"
     });
     assert.equal(store.getSettings().preferredScheduleLanguage, "en");
-    assert.deepEqual(store.getSettings().enabledLanguageCodes, ["fr"]);
+    assert.deepEqual(store.getSettings().enabledLanguageCodes, ["de"]);
 
     await store.updateSettings({
       ...store.getSettings(),
@@ -40,7 +41,7 @@ test("migrates and persists the preferred schedule language independently", asyn
     const reloaded = createStore(filePath);
     await reloaded.init();
     assert.equal(reloaded.getSettings().preferredScheduleLanguage, "");
-    assert.deepEqual(reloaded.getSettings().enabledLanguageCodes, ["fr"]);
+    assert.deepEqual(reloaded.getSettings().enabledLanguageCodes, ["de"]);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
