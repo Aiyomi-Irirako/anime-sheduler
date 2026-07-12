@@ -1,5 +1,10 @@
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const packageJson = require("../package.json");
+
 export const APP_NAME = "Anime Sheduler";
-export const APP_VERSION = "1.4.0";
+export const APP_VERSION = packageJson.version;
 
 export const WEEKDAYS = [
   { key: "monday", label: "Monday", de: "Montag", luxon: 1 },
