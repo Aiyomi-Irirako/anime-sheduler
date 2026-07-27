@@ -68,6 +68,8 @@ If a release has no exact time, the bot posts it at `MISSING_TIME_POST_TIME`. Th
 
 Automatic release posts and manual series test posts can ping selected Discord roles. Summary posts do not ping those roles.
 
+Release embeds include a compact plain-text copy field with the base anime title. Trailing labels such as specials, seasons, parts, and cours are omitted from that field without changing the stored or displayed series title.
+
 After an automatic post, only the release that was posted is advanced. Main episodes and language versions are tracked separately.
 
 ## Slash Commands

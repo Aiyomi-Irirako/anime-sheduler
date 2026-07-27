@@ -58,6 +58,44 @@ function escapeMarkdown(value) {
   return cleanString(value).replace(/([\\*_`~|>])/g, "\\$1");
 }
 
+const COPY_TITLE_QUALIFIER =
+  /(?:\s*[-:|]\s*|\s+|\s*[\[(]\s*)(?:(?:(?:season|staffel)\s*(?:\d+|[ivxlcdm]+|one|two|three|four|five))|(?:(?:\d+)(?:st|nd|rd|th)\s+season)|(?:(?:first|second|third|fourth|fifth|final)\s+season)|(?:(?:cour|part)\s*(?:\d+|[ivxlcdm]+|one|two|three|four|five))|(?:(?:\d+)(?:st|nd|rd|th)\s+(?:cour|part))|(?:tv\s+)?specials?|ova|ona|episode\s+\d+)\b.*$/i;
+// Keep Discord's content-sized embeds at maximum width without adding another field row.
+const COPY_TITLE_FIELD_NAME = `Title to copy${"\u2800\u2060".repeat(38)}`;
+
+// Discord sizes inline columns from their content, so give each label the same visual minimum width.
+const INLINE_FIELD_PADDING = Object.freeze({
+  Date: 10,
+  Time: 10,
+  Episode: 8,
+  Service: 8,
+  Version: 8,
+  Source: 9
+});
+
+function stableInlineFieldName(value) {
+  return `${value}\u2060${"\u2800\u2060".repeat(INLINE_FIELD_PADDING[value] || 0)}`;
+}
+
+export function copyableSeriesTitle(value) {
+  const original = cleanString(value).replace(/\s+/g, " ");
+  if (!original) return "";
+
+  const withoutQualifier = original.replace(COPY_TITLE_QUALIFIER, "");
+  if (withoutQualifier === original) return original;
+
+  const cleaned = withoutQualifier
+    .replace(/[\s:|\-\u2013\u2014]+$/g, "")
+    .trim();
+
+  return cleaned || original;
+}
+
+function copyTitleFieldValue(value) {
+  const title = truncate(copyableSeriesTitle(value), 1000).replaceAll("```", "'''");
+  return `\`\`\`text\n${title}\n\`\`\``;
+}
+
 function messagePayload(content) {
   if (typeof content === "string") {
     return {
@@ -153,11 +191,6 @@ function releaseDateParts(release, settings) {
 }
 
 const BLANK_INLINE_FIELD = { name: "\u200B", value: "\u200B", inline: true };
-const EMBED_WIDTH_SPACER = "\u2800".repeat(46);
-
-function stableWidthField() {
-  return { name: "\u200B", value: EMBED_WIDTH_SPACER, inline: false };
-}
 
 function releaseVersionLabel(release) {
   if (Array.isArray(release?.releases) && release.releases.length) {
@@ -202,12 +235,12 @@ export function buildAnnouncement(series, release, settings) {
     .setTitle(truncate(releaseTitle(series, release), 256))
     .setDescription(description)
     .addFields(
-      { name: "Date", value: truncate(releaseDate.date, 1024), inline: true },
-      { name: "Time", value: truncate(releaseDate.time, 1024), inline: true },
-      { name: "Episode", value: truncate(episodeText, 1024), inline: true },
-      { name: "Service", value: truncate(postService || "-", 1024), inline: true },
-      { name: "Version", value: truncate(releaseVersionLabel(release), 1024), inline: true },
-      { name: "Source", value: scheduleUrl ? `[Open schedule](${scheduleUrl})` : "-", inline: true }
+      { name: stableInlineFieldName("Date"), value: truncate(releaseDate.date, 1024), inline: true },
+      { name: stableInlineFieldName("Time"), value: truncate(releaseDate.time, 1024), inline: true },
+      { name: stableInlineFieldName("Episode"), value: truncate(episodeText, 1024), inline: true },
+      { name: stableInlineFieldName("Service"), value: truncate(postService || "-", 1024), inline: true },
+      { name: stableInlineFieldName("Version"), value: truncate(releaseVersionLabel(release), 1024), inline: true },
+      { name: stableInlineFieldName("Source"), value: scheduleUrl ? `[Open schedule](${scheduleUrl})` : "-", inline: true }
     )
     .setTimestamp(new Date());
 
@@ -227,11 +260,15 @@ export function buildAnnouncement(series, release, settings) {
     );
   }
 
+  embed.addFields({
+    name: COPY_TITLE_FIELD_NAME,
+    value: copyTitleFieldValue(series.title),
+    inline: false
+  });
+
   if (scheduleUrl) {
     embed.setURL(scheduleUrl);
   }
-
-  embed.addFields(stableWidthField());
 
   if (imageUrl) {
     embed.setThumbnail(imageUrl);
