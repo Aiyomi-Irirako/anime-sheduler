@@ -52,9 +52,9 @@ test("adds the cleaned title as a text code block to announcements", () => {
     }
   );
 
-  const field = message.embeds[0].data.fields.find((item) => item.name === "Title to copy");
+  const field = message.embeds[0].data.fields.find((item) => item.name.startsWith("Title to copy"));
   assert.deepEqual(field, {
-    name: "Title to copy",
+    name: `Title to copy${"\u2800".repeat(36)}`,
     value: "```text\nThe Quintessential Quintuplets\n```",
     inline: false
   });
