@@ -52,6 +52,17 @@ test("adds the cleaned title as a text code block to announcements", () => {
     }
   );
 
+  const metadataFields = message.embeds[0].data.fields.slice(0, 6);
+  assert.ok(metadataFields.every((item) => item.inline));
+  assert.deepEqual(metadataFields.map((item) => item.name), [
+    `Date\u2060${"\u2800\u2060".repeat(10)}`,
+    `Time\u2060${"\u2800\u2060".repeat(10)}`,
+    `Episode\u2060${"\u2800\u2060".repeat(8)}`,
+    `Service\u2060${"\u2800\u2060".repeat(8)}`,
+    `Version\u2060${"\u2800\u2060".repeat(8)}`,
+    `Source\u2060${"\u2800\u2060".repeat(9)}`
+  ]);
+
   const field = message.embeds[0].data.fields.find((item) => item.name.startsWith("Title to copy"));
   assert.deepEqual(field, {
     name: `Title to copy${"\u2800\u2060".repeat(38)}`,

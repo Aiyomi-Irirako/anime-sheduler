@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { DateTime } from "luxon";
 import { checkDueAnnouncements } from "../src/scheduler.js";
 
+function announcementFieldValue(message, name) {
+  return message.embeds[0].data.fields.find((field) => field.name.startsWith(name))?.value;
+}
+
 test("posts only the delayed dub when LiveChart marks the main series finished", async () => {
   const now = DateTime.fromISO("2026-07-12T12:00:00", { zone: "Europe/Berlin" });
   const settings = {
@@ -90,9 +94,8 @@ test("posts only the delayed dub when LiveChart marks the main series finished",
 
   assert.equal(result.posted, 1);
   assert.equal(messages.length, 1);
-  const fields = Object.fromEntries(messages[0].embeds[0].data.fields.map((field) => [field.name, field.value]));
-  assert.equal(fields.Version, "German");
-  assert.equal(fields.Episode, "Episode 12 (German)");
+  assert.equal(announcementFieldValue(messages[0], "Version"), "German");
+  assert.equal(announcementFieldValue(messages[0], "Episode"), "Episode 12 (German)");
   assert.doesNotMatch(JSON.stringify(messages[0]), /Original/);
   assert.equal(postLogs[0].type, "auto-language");
 });
@@ -157,9 +160,8 @@ test("preserves an unposted final original episode when LiveChart just finished"
   const result = await checkDueAnnouncements(store, discord, { now, syncSeries });
 
   assert.equal(result.posted, 1);
-  const fields = Object.fromEntries(messages[0].embeds[0].data.fields.map((field) => [field.name, field.value]));
-  assert.equal(fields.Version, "Original");
-  assert.equal(fields.Episode, "Episode 12");
+  assert.equal(announcementFieldValue(messages[0], "Version"), "Original");
+  assert.equal(announcementFieldValue(messages[0], "Episode"), "Episode 12");
 });
 
 test("drops an unpreferred Japanese broadcast after a preferred batch release finished", async () => {

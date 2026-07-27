@@ -63,6 +63,20 @@ const COPY_TITLE_QUALIFIER =
 // Keep Discord's content-sized embeds at maximum width without adding another field row.
 const COPY_TITLE_FIELD_NAME = `Title to copy${"\u2800\u2060".repeat(38)}`;
 
+// Discord sizes inline columns from their content, so give each label the same visual minimum width.
+const INLINE_FIELD_PADDING = Object.freeze({
+  Date: 10,
+  Time: 10,
+  Episode: 8,
+  Service: 8,
+  Version: 8,
+  Source: 9
+});
+
+function stableInlineFieldName(value) {
+  return `${value}\u2060${"\u2800\u2060".repeat(INLINE_FIELD_PADDING[value] || 0)}`;
+}
+
 export function copyableSeriesTitle(value) {
   const original = cleanString(value).replace(/\s+/g, " ");
   if (!original) return "";
@@ -221,12 +235,12 @@ export function buildAnnouncement(series, release, settings) {
     .setTitle(truncate(releaseTitle(series, release), 256))
     .setDescription(description)
     .addFields(
-      { name: "Date", value: truncate(releaseDate.date, 1024), inline: true },
-      { name: "Time", value: truncate(releaseDate.time, 1024), inline: true },
-      { name: "Episode", value: truncate(episodeText, 1024), inline: true },
-      { name: "Service", value: truncate(postService || "-", 1024), inline: true },
-      { name: "Version", value: truncate(releaseVersionLabel(release), 1024), inline: true },
-      { name: "Source", value: scheduleUrl ? `[Open schedule](${scheduleUrl})` : "-", inline: true }
+      { name: stableInlineFieldName("Date"), value: truncate(releaseDate.date, 1024), inline: true },
+      { name: stableInlineFieldName("Time"), value: truncate(releaseDate.time, 1024), inline: true },
+      { name: stableInlineFieldName("Episode"), value: truncate(episodeText, 1024), inline: true },
+      { name: stableInlineFieldName("Service"), value: truncate(postService || "-", 1024), inline: true },
+      { name: stableInlineFieldName("Version"), value: truncate(releaseVersionLabel(release), 1024), inline: true },
+      { name: stableInlineFieldName("Source"), value: scheduleUrl ? `[Open schedule](${scheduleUrl})` : "-", inline: true }
     )
     .setTimestamp(new Date());
 
