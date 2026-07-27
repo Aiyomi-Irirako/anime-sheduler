@@ -58,6 +58,28 @@ function escapeMarkdown(value) {
   return cleanString(value).replace(/([\\*_`~|>])/g, "\\$1");
 }
 
+const COPY_TITLE_QUALIFIER =
+  /(?:\s*[-:|]\s*|\s+|\s*[\[(]\s*)(?:(?:(?:season|staffel)\s*(?:\d+|[ivxlcdm]+|one|two|three|four|five))|(?:(?:\d+)(?:st|nd|rd|th)\s+season)|(?:(?:first|second|third|fourth|fifth|final)\s+season)|(?:(?:cour|part)\s*(?:\d+|[ivxlcdm]+|one|two|three|four|five))|(?:(?:\d+)(?:st|nd|rd|th)\s+(?:cour|part))|(?:tv\s+)?specials?|ova|ona|episode\s+\d+)\b.*$/i;
+
+export function copyableSeriesTitle(value) {
+  const original = cleanString(value).replace(/\s+/g, " ");
+  if (!original) return "";
+
+  const withoutQualifier = original.replace(COPY_TITLE_QUALIFIER, "");
+  if (withoutQualifier === original) return original;
+
+  const cleaned = withoutQualifier
+    .replace(/[\s:|\-\u2013\u2014]+$/g, "")
+    .trim();
+
+  return cleaned || original;
+}
+
+function copyTitleFieldValue(value) {
+  const title = truncate(copyableSeriesTitle(value), 1000).replaceAll("```", "'''");
+  return `\`\`\`text\n${title}\n\`\`\``;
+}
+
 function messagePayload(content) {
   if (typeof content === "string") {
     return {
@@ -153,11 +175,6 @@ function releaseDateParts(release, settings) {
 }
 
 const BLANK_INLINE_FIELD = { name: "\u200B", value: "\u200B", inline: true };
-const EMBED_WIDTH_SPACER = "\u2800".repeat(46);
-
-function stableWidthField() {
-  return { name: "\u200B", value: EMBED_WIDTH_SPACER, inline: false };
-}
 
 function releaseVersionLabel(release) {
   if (Array.isArray(release?.releases) && release.releases.length) {
@@ -227,11 +244,15 @@ export function buildAnnouncement(series, release, settings) {
     );
   }
 
+  embed.addFields({
+    name: "Title to copy",
+    value: copyTitleFieldValue(series.title),
+    inline: false
+  });
+
   if (scheduleUrl) {
     embed.setURL(scheduleUrl);
   }
-
-  embed.addFields(stableWidthField());
 
   if (imageUrl) {
     embed.setThumbnail(imageUrl);
