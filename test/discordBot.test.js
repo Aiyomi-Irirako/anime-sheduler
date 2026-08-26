@@ -34,6 +34,7 @@ test("adds the cleaned title as a text code block to announcements", () => {
       title: "The Quintessential Quintuplets Specials",
       service: "Crunchyroll",
       preferredService: "",
+      streamingServiceId: "G6EXAMPLE123",
       scheduleLink: "https://www.livechart.me/anime/11921/schedules",
       imageUrl: "",
       note: "",
@@ -69,5 +70,38 @@ test("adds the cleaned title as a text code block to announcements", () => {
     value: "```text\nThe Quintessential Quintuplets\n```",
     inline: false
   });
+  assert.deepEqual(message.embeds[0].data.fields.find((item) => item.name === "Service ID to copy"), {
+    name: "Service ID to copy",
+    value: "```text\nG6EXAMPLE123\n```",
+    inline: false
+  });
   assert.equal(message.embeds[0].data.fields.some((item) => item.name === "\u200B"), false);
+});
+
+test("omits the service ID copy field when no ID was entered", () => {
+  const message = buildAnnouncement(
+    {
+      title: "Series without service ID",
+      service: "Crunchyroll",
+      preferredService: "",
+      streamingServiceId: "",
+      scheduleLink: "",
+      imageUrl: "",
+      note: "",
+      nextEpisode: 1,
+      episodeBatchSize: 1,
+      languageTracks: []
+    },
+    {
+      kind: "main",
+      dateTime: DateTime.fromISO("2026-07-27T18:00:00", { zone: "Europe/Berlin" }),
+      missingTime: false
+    },
+    {
+      timeZone: "Europe/Berlin",
+      missingTimePostTime: "18:00"
+    }
+  );
+
+  assert.equal(message.embeds[0].data.fields.some((item) => item.name === "Service ID to copy"), false);
 });

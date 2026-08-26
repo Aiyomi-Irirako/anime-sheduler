@@ -1157,6 +1157,10 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
           <span>Post service</span>
           <select name="preferredService">${renderPreferredServiceOptions(series)}</select>
         </label>
+        <label class="span-2">
+          <span>Streaming service ID</span>
+          <input name="streamingServiceId" maxlength="1000" autocomplete="off" value="${escapeHtml(series.streamingServiceId)}">
+        </label>
         <label>
           <span>Status</span>
           <select name="status">${renderStatusOptions(series.status)}</select>
@@ -1266,6 +1270,7 @@ function formToSeries(body, id = "") {
     title: cleanString(body.title),
     service: cleanString(body.service),
     preferredService: cleanString(body.preferredService),
+    streamingServiceId: cleanString(body.streamingServiceId),
     premiereDate: cleanString(body.premiereDate),
     releaseDay: cleanString(body.releaseDay),
     releaseTime: cleanString(body.releaseTime),
@@ -1454,6 +1459,7 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
             title: "",
             service: "",
             preferredService: "",
+            streamingServiceId: "",
             premiereDate: "",
             releaseDay: "",
             releaseTime: "",
@@ -1583,6 +1589,7 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
         service: series.service,
         preferredService: series.preferredService || "",
         postService: pickPreferredService(series.service, series.preferredService),
+        streamingServiceId: series.streamingServiceId || "",
         imageUrl: series.imageUrl,
         nextEpisode: release.episode,
         episodeEnd: release.episodeEnd,

@@ -91,9 +91,9 @@ export function copyableSeriesTitle(value) {
   return cleaned || original;
 }
 
-function copyTitleFieldValue(value) {
-  const title = truncate(copyableSeriesTitle(value), 1000).replaceAll("```", "'''");
-  return `\`\`\`text\n${title}\n\`\`\``;
+function copyFieldValue(value) {
+  const text = truncate(cleanString(value), 1000).replaceAll("```", "'''");
+  return `\`\`\`text\n${text}\n\`\`\``;
 }
 
 function messagePayload(content) {
@@ -262,9 +262,17 @@ export function buildAnnouncement(series, release, settings) {
 
   embed.addFields({
     name: COPY_TITLE_FIELD_NAME,
-    value: copyTitleFieldValue(series.title),
+    value: copyFieldValue(copyableSeriesTitle(series.title)),
     inline: false
   });
+
+  if (cleanString(series.streamingServiceId)) {
+    embed.addFields({
+      name: "Service ID to copy",
+      value: copyFieldValue(series.streamingServiceId),
+      inline: false
+    });
+  }
 
   if (scheduleUrl) {
     embed.setURL(scheduleUrl);
