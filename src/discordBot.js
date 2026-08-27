@@ -61,7 +61,7 @@ function escapeMarkdown(value) {
 const COPY_TITLE_QUALIFIER =
   /(?:\s*[-:|]\s*|\s+|\s*[\[(]\s*)(?:(?:(?:season|staffel)\s*(?:\d+|[ivxlcdm]+|one|two|three|four|five))|(?:(?:\d+)(?:st|nd|rd|th)\s+season)|(?:(?:first|second|third|fourth|fifth|final)\s+season)|(?:(?:cour|part)\s*(?:\d+|[ivxlcdm]+|one|two|three|four|five))|(?:(?:\d+)(?:st|nd|rd|th)\s+(?:cour|part))|(?:tv\s+)?specials?|ova|ona|episode\s+\d+)\b.*$/i;
 // Keep Discord's content-sized embeds at maximum width without adding another field row.
-const COPY_TITLE_FIELD_NAME = `Title to copy${"\u2800\u2060".repeat(38)}`;
+const COPY_TITLE_FIELD_NAME = `Title${"\u2800\u2060".repeat(46)}`;
 
 // Discord sizes inline columns from their content, so give each label the same visual minimum width.
 const INLINE_FIELD_PADDING = Object.freeze({
@@ -268,7 +268,7 @@ export function buildAnnouncement(series, release, settings) {
 
   if (cleanString(series.streamingServiceId)) {
     embed.addFields({
-      name: "Service ID to copy",
+      name: "Service ID",
       value: copyFieldValue(series.streamingServiceId),
       inline: false
     });

@@ -64,14 +64,14 @@ test("adds the cleaned title as a text code block to announcements", () => {
     `Source\u2060${"\u2800\u2060".repeat(9)}`
   ]);
 
-  const field = message.embeds[0].data.fields.find((item) => item.name.startsWith("Title to copy"));
+  const field = message.embeds[0].data.fields.find((item) => item.name.startsWith("Title"));
   assert.deepEqual(field, {
-    name: `Title to copy${"\u2800\u2060".repeat(38)}`,
+    name: `Title${"\u2800\u2060".repeat(46)}`,
     value: "```text\nThe Quintessential Quintuplets\n```",
     inline: false
   });
-  assert.deepEqual(message.embeds[0].data.fields.find((item) => item.name === "Service ID to copy"), {
-    name: "Service ID to copy",
+  assert.deepEqual(message.embeds[0].data.fields.find((item) => item.name === "Service ID"), {
+    name: "Service ID",
     value: "```text\nG6EXAMPLE123\n```",
     inline: false
   });
@@ -103,5 +103,5 @@ test("omits the service ID copy field when no ID was entered", () => {
     }
   );
 
-  assert.equal(message.embeds[0].data.fields.some((item) => item.name === "Service ID to copy"), false);
+  assert.equal(message.embeds[0].data.fields.some((item) => item.name === "Service ID"), false);
 });
