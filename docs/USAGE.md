@@ -41,6 +41,7 @@ For Docker, the web import is usually easier because you can paste or upload the
 - LiveChart sync overwrites the main release date, weekday, and time when LiveChart exposes an exact timestamp.
 - LiveChart language times: when LiveChart exposes a timestamp for a language version, the bot stores it as that language's next date and release time.
 - `Image URL`: optional poster or cover image used as a small Discord thumbnail. LiveChart sync can fill this automatically when available.
+- `Streaming service ID`: optional manual series ID for the selected posting service. LiveChart sync and CSV imports do not overwrite it.
 - `Discord announcement channels`: open a server section, then select one or more text channels the bot can access. Release posts are sent to every selected channel.
 - `Discord role mentions`: open a server section and select roles for timed main releases, language releases, and missing-time fallback posts. If the bot posts to multiple servers, select the matching role in each server.
 - `Sync LiveChart now`: updates all active series that have a LiveChart link.
@@ -68,7 +69,7 @@ If a release has no exact time, the bot posts it at `MISSING_TIME_POST_TIME`. Th
 
 Automatic release posts and manual series test posts can ping selected Discord roles. Summary posts do not ping those roles.
 
-Release embeds include a compact plain-text copy field with the base anime title. Trailing labels such as specials, seasons, parts, and cours are omitted from that field without changing the stored or displayed series title.
+Release embeds include compact plain-text copy fields for the base anime title and, when entered, its streaming service ID. Trailing labels such as specials, seasons, parts, and cours are omitted from the title field without changing the stored or displayed series title.
 
 After an automatic post, only the release that was posted is advanced. Main episodes and language versions are tracked separately.
 

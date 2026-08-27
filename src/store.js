@@ -71,6 +71,7 @@ const CHANGELOG_FIELD_LABELS = [
   ["title", "Title"],
   ["service", "Services"],
   ["preferredService", "Preferred service"],
+  ["streamingServiceId", "Streaming service ID"],
   ["premiereDate", "Premiere date"],
   ["releaseDay", "Release day"],
   ["releaseTime", "Release time"],
@@ -318,6 +319,9 @@ function normalizeSeries(input, existing = {}) {
     title: cleanString(input.title),
     service,
     preferredService,
+    streamingServiceId: cleanString(
+      input.streamingServiceId === undefined ? existing.streamingServiceId : input.streamingServiceId
+    ),
     premiereDate: normalizeDate(input.premiereDate),
     releaseDay: normalizeReleaseDay(input.releaseDay),
     releaseTime: normalizeTime(input.releaseTime),
