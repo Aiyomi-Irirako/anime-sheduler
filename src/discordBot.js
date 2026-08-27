@@ -60,8 +60,7 @@ function escapeMarkdown(value) {
 
 const COPY_TITLE_QUALIFIER =
   /(?:\s*[-:|]\s*|\s+|\s*[\[(]\s*)(?:(?:(?:season|staffel)\s*(?:\d+|[ivxlcdm]+|one|two|three|four|five))|(?:(?:\d+)(?:st|nd|rd|th)\s+season)|(?:(?:first|second|third|fourth|fifth|final)\s+season)|(?:(?:cour|part)\s*(?:\d+|[ivxlcdm]+|one|two|three|four|five))|(?:(?:\d+)(?:st|nd|rd|th)\s+(?:cour|part))|(?:tv\s+)?specials?|ova|ona|episode\s+\d+)\b.*$/i;
-// Keep Discord's content-sized embeds wide without wrapping the invisible padding onto another line.
-const COPY_TITLE_FIELD_NAME = `Title\u2060${"\u2800\u2060".repeat(43)}`;
+const COPY_TITLE_FIELD_NAME = "Title";
 
 // Discord sizes inline columns from their content, so give each label the same visual minimum width.
 const INLINE_FIELD_PADDING = Object.freeze({
