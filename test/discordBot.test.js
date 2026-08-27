@@ -64,9 +64,9 @@ test("adds the cleaned title as a text code block to announcements", () => {
     `Source\u2060${"\u2800\u2060".repeat(9)}`
   ]);
 
-  const field = message.embeds[0].data.fields.find((item) => item.name.endsWith("Title"));
+  const field = message.embeds[0].data.fields.find((item) => item.name.startsWith("Title"));
   assert.deepEqual(field, {
-    name: `${"\u2800\u2060".repeat(46)}\nTitle`,
+    name: `Title\u2060${"\u2800\u2060".repeat(43)}`,
     value: "```text\nThe Quintessential Quintuplets\n```",
     inline: false
   });
