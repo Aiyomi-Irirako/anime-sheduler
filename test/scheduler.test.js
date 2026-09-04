@@ -100,7 +100,7 @@ test("posts only the delayed dub when LiveChart marks the main series finished",
   assert.equal(postLogs[0].type, "auto-language");
 });
 
-test("preserves an unposted final original episode when LiveChart just finished", async () => {
+test("preserves an unposted final original episode when the preferred service just finished", async () => {
   const now = DateTime.fromISO("2026-07-12T12:00:00", { zone: "Europe/Berlin" });
   const settings = {
     timeZone: "Europe/Berlin",
@@ -154,7 +154,7 @@ test("preserves an unposted final original episode when LiveChart just finished"
   };
   const syncSeries = async () => {
     currentSeries = { ...currentSeries, status: "finished", nextEpisode: null };
-    return { changed: true, updated: currentSeries, live: { mainFinished: true } };
+    return { changed: true, updated: currentSeries, live: { mainFinished: true, preferredReleaseFinished: true } };
   };
 
   const result = await checkDueAnnouncements(store, discord, { now, syncSeries });

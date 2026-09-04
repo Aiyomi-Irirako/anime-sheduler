@@ -5,7 +5,7 @@ import {
   normalizeLanguageTracks,
   normalizePreferredScheduleLanguage
 } from "./languages.js";
-import { shouldDeleteFinishedSeries } from "./schedule.js";
+import { getNextRelease, isUnpostedFinalMainRelease, shouldDeleteFinishedSeries } from "./schedule.js";
 
 const WEEKDAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
@@ -91,9 +91,11 @@ function hasChanged(series, patch) {
 
 export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
   const settings = store.getSettings();
+  const now = options.now || DateTime.now();
   const preferredScheduleLanguage = normalizePreferredScheduleLanguage(settings.preferredScheduleLanguage);
   const live = await fetchLiveChartEpisodes(series.scheduleLink, {
-    preferredLanguageCodes: preferredScheduleLanguage ? [preferredScheduleLanguage] : []
+    preferredLanguageCodes: preferredScheduleLanguage ? [preferredScheduleLanguage] : [],
+    nowTimestamp: Math.floor(now.toSeconds())
   });
   const overwriteSchedule = Boolean(options.overwriteSchedule);
   const liveMainSchedule = overwriteSchedule ? prepareLiveMainSchedule(live, settings) : {};
@@ -103,32 +105,39 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
     liveLanguageTracks,
     settings.enabledLanguageCodes || []
   );
-  const nextEpisode = Number.isFinite(live.nextEpisode) ? live.nextEpisode : live.mainFinished ? null : series.nextEpisode;
+  const episodeCount = Number.isFinite(live.episodeCount) ? live.episodeCount : series.episodeCount;
+  const pendingFinal = live.mainFinished && isUnpostedFinalMainRelease(
+    { ...series, episodeCount },
+    getNextRelease({ ...series, episodeCount }, settings, now),
+    settings,
+    now
+  );
+  const mainFinished = live.mainFinished && !pendingFinal;
+  const nextEpisode = Number.isFinite(live.nextEpisode) ? live.nextEpisode : mainFinished ? null : series.nextEpisode;
   const episodeBatchSize =
     overwriteSchedule && Number.isFinite(live.nextEpisode)
       ? live.episodeBatchSize
       : live.episodeBatchSize > 1
         ? live.episodeBatchSize
         : series.episodeBatchSize;
-  const episodeCount = Number.isFinite(live.episodeCount) ? live.episodeCount : series.episodeCount;
   const hasMainEpisode = Number.isFinite(nextEpisode);
   const hasLanguageEpisode = languageTracks.some((track) => track.enabled && Number.isFinite(track.nextEpisode));
-  const completedAfterSync = (live.mainFinished || series.status === "finished") && !hasMainEpisode && !hasLanguageEpisode;
+  const completedAfterSync = (mainFinished || series.status === "finished") && !hasMainEpisode && !hasLanguageEpisode;
   const reactivated = series.status === "finished" && !series.enabled && (hasMainEpisode || hasLanguageEpisode);
   const patch = {
     ...series,
     service: overwriteSchedule && live.service ? live.service : series.service || live.service,
-    status: live.mainFinished ? "finished" : reactivated && hasMainEpisode ? "airing" : series.status,
+    status: mainFinished ? "finished" : reactivated && hasMainEpisode ? "airing" : series.status,
     enabled: completedAfterSync ? false : reactivated ? true : series.enabled,
     nextEpisode,
     episodeBatchSize,
     episodeCount,
     releaseDay: liveMainSchedule.releaseDay || series.releaseDay,
     releaseTime: liveMainSchedule.releaseTime || series.releaseTime,
-    nextDate: live.mainFinished && overwriteSchedule ? "" : liveMainSchedule.nextDate || series.nextDate,
+    nextDate: mainFinished && overwriteSchedule ? "" : liveMainSchedule.nextDate || series.nextDate,
     imageUrl: overwriteSchedule && live.imageUrl ? live.imageUrl : series.imageUrl || live.imageUrl,
     languageTracks,
-    lastLiveChartCheckedAt: DateTime.now().toISO()
+    lastLiveChartCheckedAt: now.toISO()
   };
 
   if (!hasChanged(series, patch)) {
@@ -179,7 +188,8 @@ export async function syncAllLiveChart(store, options = {}) {
       };
       const synced = await syncOneSeriesFromLiveChart(store, current, {
         overwriteSchedule,
-        source: options.source || "livechart-sync"
+        source: options.source || "livechart-sync",
+        now: options.now
       });
 
       if (synced.changed) {
@@ -225,7 +235,7 @@ export async function syncAllLiveChart(store, options = {}) {
   if (!result.rateLimited) {
     for (const series of [...store.listSeries()]) {
       if (failedIds.has(series.id)) continue;
-      if (!shouldDeleteFinishedSeries(series, settings)) continue;
+      if (!shouldDeleteFinishedSeries(series, settings, options.now)) continue;
 
       await store.deleteSeries(series.id, { source: "livechart-cleanup" });
       result.deleted += 1;

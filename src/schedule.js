@@ -59,13 +59,13 @@ export function getFinishedDeletionDate(series, settings = {}) {
   if (!isSeriesComplete(series)) return null;
 
   const zone = settings.timeZone || "Europe/Berlin";
-  const referenceAt = Number.isFinite(series?.episodeCount)
-    ? cleanString(series.episodeCountUpdatedAt)
-    : cleanString(series.finishedAt || series.lastLiveChartCheckedAt || series.updatedAt || series.createdAt);
-  if (!referenceAt) return null;
+  const finishedAt = DateTime.fromISO(cleanString(series.finishedAt), { zone });
+  if (!finishedAt.isValid) return null;
 
-  const since = DateTime.fromISO(referenceAt, { zone });
-  if (!since.isValid) return null;
+  const totalUpdatedAt = DateTime.fromISO(cleanString(series.episodeCountUpdatedAt), { zone });
+  const since = Number.isFinite(series.episodeCount) && totalUpdatedAt.isValid && totalUpdatedAt > finishedAt
+    ? totalUpdatedAt
+    : finishedAt;
   return since.setZone(zone).plus({ months: FINISHED_SERIES_RETENTION_MONTHS });
 }
 
@@ -419,6 +419,22 @@ export function shouldPostRelease(release, settings, base = DateTime.now()) {
   const startsAt = release.missingTime ? postDateTime : postDateTime.minus({ minutes: reminderMinutes });
   const expiresAt = postDateTime.plus({ hours: RELEASE_POST_EXPIRY_HOURS });
   return now >= startsAt && now <= expiresAt;
+}
+
+export function isUnpostedFinalMainRelease(series, release, settings, base = DateTime.now()) {
+  if (!release || release.kind !== "main" || !Number.isFinite(series.episodeCount)) return false;
+  if (!Number.isFinite(release.episode) || release.episode < 1 || release.episode > series.episodeCount) return false;
+  const end = Number.isFinite(release.episodeEnd) ? release.episodeEnd : release.episode;
+  if (end !== series.episodeCount) return false;
+
+  // A completed schedule may replace the final episode with "Released" before the bot's next tick.
+  const releaseAt = getReleasePostDateTime(release, settings);
+  if (!releaseAt || base < releaseAt || !shouldPostRelease(release, settings, base)) return false;
+  if (series.lastPostedKey === releasePostKey(series, release, settings)) return false;
+  const posted = cleanString(series.lastPostedKey).match(/:main:(\d+)(?:-(\d+))?:/);
+  if (posted && Number(posted[2] || posted[1]) >= end) return false;
+  const lastPostedAt = DateTime.fromISO(cleanString(series.lastPostedAt));
+  return !lastPostedAt.isValid || lastPostedAt < releaseAt;
 }
 
 export function releasePostKey(series, release, settings = {}) {

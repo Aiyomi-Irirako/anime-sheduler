@@ -831,7 +831,7 @@ function renderFinishedPage(data, query) {
       const isDue = deletionDate && now >= deletionDate;
       const cleanup = deletionDate
         ? deletionDate.setLocale("en").toFormat("dd LLL yyyy HH:mm")
-        : "Waiting for total episodes";
+        : "Waiting for completion date";
       const totalUpdated = Number.isFinite(series.episodeCount)
         ? formatLifecycleDate(series.episodeCountUpdatedAt, data.settings)
         : "No total count";
@@ -859,14 +859,14 @@ function renderFinishedPage(data, query) {
       </div>
       <div class="hero-meta">
         <span>${finished.length} finished</span>
-        <span>Auto-delete after 1 month of stable totals</span>
+        <span>Kept for at least 1 month after completion</span>
       </div>
     </section>
     <section class="panel wide">
       <div class="section-title split">
         <div>
           <h2>Finished Entries</h2>
-          <p>Entries stay checked during LiveChart sync and are removed after the total episode count has been stable for one month. Specials without a total count use the finished date.</p>
+          <p>Entries stay checked during LiveChart sync and remain here for at least one month after all tracked releases finish. A later change to the total episode count extends this period.</p>
         </div>
         <form method="post" action="/sync-livechart-all">
           <input type="hidden" name="returnTo" value="/finished">
@@ -1110,9 +1110,9 @@ function renderSeriesLifecyclePanel(series, settings) {
   if (!isSeriesComplete(series)) return "";
 
   const deletionDate = getFinishedDeletionDate(series, settings);
-  const basis = Number.isFinite(series.episodeCount)
-    ? `Total episode count last changed: ${formatLifecycleDate(series.episodeCountUpdatedAt, settings)}`
-    : `No total episode count on LiveChart. Timer uses finished date: ${formatLifecycleDate(series.finishedAt, settings)}`;
+  const basis = `Finished: ${formatLifecycleDate(series.finishedAt, settings)}${Number.isFinite(series.episodeCount)
+    ? `. Total episode count last changed: ${formatLifecycleDate(series.episodeCountUpdatedAt, settings)}`
+    : ""}`;
   const cleanup = deletionDate
     ? deletionDate.setLocale("en").toFormat("dd LLL yyyy HH:mm")
     : "Waiting for lifecycle data";
