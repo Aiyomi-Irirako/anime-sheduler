@@ -55,6 +55,19 @@ export function isSeriesComplete(series) {
   return cleanString(series?.status).toLowerCase() === "finished" && !hasPendingMainRelease(series) && !hasPendingLanguageRelease(series);
 }
 
+export function getCompletionNotificationDate(series, settings = {}) {
+  if (!isSeriesComplete(series)) return null;
+
+  const finishedAt = DateTime.fromISO(cleanString(series.finishedAt), { zone: settings.timeZone || "Europe/Berlin" });
+  return finishedAt.isValid ? finishedAt.plus({ weeks: 1 }) : null;
+}
+
+export function shouldNotifyCompletion(series, settings = {}, base = DateTime.now()) {
+  if (cleanString(series.completionNotifiedAt)) return false;
+  const notificationDate = getCompletionNotificationDate(series, settings);
+  return Boolean(notificationDate && base >= notificationDate);
+}
+
 export function getFinishedDeletionDate(series, settings = {}) {
   if (!isSeriesComplete(series)) return null;
 
