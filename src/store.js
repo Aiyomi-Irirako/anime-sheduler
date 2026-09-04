@@ -348,12 +348,20 @@ function normalizeSeries(input, existing = {}) {
     lastPostedAt: cleanString(input.lastPostedAt || existing.lastPostedAt),
     episodeCountUpdatedAt,
     finishedAt: cleanString(input.finishedAt || existing.finishedAt),
+    completionNotifiedAt: cleanString(input.completionNotifiedAt || existing.completionNotifiedAt),
+    completionNotifiedChannelIds: normalizeDiscordChannelIds(
+      input.completionNotifiedChannelIds ?? existing.completionNotifiedChannelIds
+    ),
     lastLiveChartCheckedAt: cleanString(input.lastLiveChartCheckedAt || existing.lastLiveChartCheckedAt),
     createdAt: existing.createdAt || input.createdAt || now,
     updatedAt: now
   };
 
   normalized.finishedAt = isSeriesComplete(normalized) ? normalized.finishedAt || now : "";
+  if (!normalized.finishedAt) {
+    normalized.completionNotifiedAt = "";
+    normalized.completionNotifiedChannelIds = [];
+  }
   return normalized;
 }
 

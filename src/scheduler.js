@@ -4,12 +4,14 @@ import {
   advanceAfterPost,
   getNextLanguageRelease,
   getNextRelease,
+  getCompletionNotificationDate,
   getReleasePostDateTime,
   isUnpostedFinalMainRelease,
   releasePostKey,
-  shouldPostRelease
+  shouldPostRelease,
+  shouldNotifyCompletion
 } from "./schedule.js";
-import { buildAnnouncement, releaseMentionRoleIds } from "./discordBot.js";
+import { buildAnnouncement, buildCompletionAnnouncement, releaseMentionRoleIds } from "./discordBot.js";
 import { enabledLanguageTracks } from "./languages.js";
 import { isLiveChartLink, syncOneSeriesFromLiveChart } from "./livechartSync.js";
 import { cleanString } from "./utils.js";
@@ -287,8 +289,71 @@ export async function checkDueAnnouncements(store, discord, options = {}) {
   return { posted, skipped };
 }
 
+export async function checkCompletionAnnouncements(store, discord, options = {}) {
+  if (!discord.enabled || !discord.ready) return { posted: 0, failed: 0, reason: "discord_not_ready" };
+
+  const { settings, series: entries } = store.snapshot();
+  const now = (options.now || DateTime.now()).setZone(settings.timeZone || "Europe/Berlin");
+  let posted = 0;
+  let failed = 0;
+
+  for (const entry of entries) {
+    const series = store.getSeries(entry.id);
+    if (!series || !shouldNotifyCompletion(series, settings, now)) continue;
+
+    const message = buildCompletionAnnouncement(series, settings, now);
+    let result;
+    try {
+      result = await discord.post(message, undefined, { excludeChannelIds: series.completionNotifiedChannelIds || [] });
+    } catch (error) {
+      failed += 1;
+      console.warn(`Completion announcement failed for "${series.title}": ${error.message}`);
+      continue;
+    }
+
+    const current = store.getSeries(series.id);
+    if (!current || current.finishedAt !== series.finishedAt) continue;
+    const allSent = !result.failed.length;
+    const channelIds = [...new Set([
+      ...(current.completionNotifiedChannelIds || []),
+      ...result.sent.map((item) => item.channelId)
+    ])];
+    await store.replaceSeries(current.id, {
+      ...current,
+      completionNotifiedAt: allSent ? now.toISO() : "",
+      completionNotifiedChannelIds: channelIds
+    }, { source: "scheduler-completion" });
+
+    if (result.sent.length) {
+      await store.addPostLog({
+        type: "auto-completed",
+        seriesId: current.id,
+        title: current.title,
+        episodeCount: current.episodeCount,
+        finishedAt: current.finishedAt,
+        notificationAt: getCompletionNotificationDate(current, settings).toISO(),
+        channelIds: result.sent.map((item) => item.channelId),
+        message
+      });
+      posted += 1;
+    }
+    if (!allSent) failed += 1;
+  }
+
+  return { posted, failed };
+}
+
 export function startScheduler(store, discord) {
+  let running = false;
   const run = async () => {
+    if (running) return;
+    running = true;
+    try {
+      const result = await checkCompletionAnnouncements(store, discord);
+      if (result.posted) console.log(`Scheduler posted ${result.posted} completion announcement(s).`);
+    } catch (error) {
+      console.error(`Completion scheduler error: ${error.stack || error.message}`);
+    }
     try {
       const result = await checkDueAnnouncements(store, discord);
       if (result.posted) console.log(`Scheduler posted ${result.posted} announcement(s).`);
@@ -297,6 +362,8 @@ export function startScheduler(store, discord) {
       }
     } catch (error) {
       console.error(`Scheduler error: ${error.stack || error.message}`);
+    } finally {
+      running = false;
     }
   };
 

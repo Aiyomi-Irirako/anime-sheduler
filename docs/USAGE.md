@@ -75,6 +75,14 @@ After an automatic post, only the release that was posted is advanced. Main epis
 
 Completed series remain in `Finished` for at least one month after all tracked releases finish. A later change to the total episode count restarts the one-month retention period. Episode totals announced before completion do not shorten this period. Entries already deleted by an older version require a backup to restore.
 
+### Completion Notices
+
+One week after the stored completion time (`finishedAt`), the scheduler sends a one-time Discord notice to the configured channels. The notice includes the series title, total episode count, selected streaming service, and completion date. Unknown episode totals or services are shown as `Unknown` instead of being guessed. Title and service ID copy fields are included as in release posts. Completion notices do not ping release roles.
+
+A series is complete only when the main release and all enabled language versions have finished. The notice is due seven calendar days later at the same local time in the configured timezone and is sent on the next scheduler tick. Release reminder settings do not shift it. Existing finished entries are eligible too; overdue notices are sent while the entry is still retained, including after a restart or a Discord outage. No extra LiveChart requests are made for these notices.
+
+Successful delivery is stored with the series and included in JSON backups. If delivery fails in some channels, only those channels are retried. Returning a series to an unfinished state resets its completion notice, so a later completion starts a new week. The existing one-month cleanup policy is unchanged.
+
 ## Slash Commands
 
 ```text

@@ -284,6 +284,30 @@ export function buildAnnouncement(series, release, settings) {
   return { embeds: [embed], allowedMentions: { parse: [] } };
 }
 
+export function buildCompletionAnnouncement(series, settings = {}, now = DateTime.now()) {
+  const scheduleUrl = normalizeHttpUrl(series.scheduleLink);
+  const imageUrl = normalizeHttpUrl(series.imageUrl);
+  const finishedAt = DateTime.fromISO(cleanString(series.finishedAt), { zone: settings.timeZone || "Europe/Berlin" });
+  const embed = new EmbedBuilder()
+    .setColor(0x8bb4ff)
+    .setTitle(truncate(`${series.title} - Completed`, 256))
+    .setDescription("This series has finished. All tracked releases are complete.")
+    .addFields(
+      { name: "Episodes", value: Number.isFinite(series.episodeCount) && series.episodeCount > 0 ? String(series.episodeCount) : "Unknown", inline: true },
+      { name: "Service", value: truncate(pickPreferredService(series.service, series.preferredService) || "Unknown", 1024), inline: true },
+      { name: "Finished", value: finishedAt.isValid ? finishedAt.setLocale("en").toFormat("ccc, dd LLL yyyy") : "Unknown", inline: true },
+      { name: COPY_TITLE_FIELD_NAME, value: copyFieldValue(copyableSeriesTitle(series.title)), inline: false }
+    )
+    .setTimestamp(now.toJSDate());
+
+  if (cleanString(series.streamingServiceId)) {
+    embed.addFields({ name: "Service ID", value: copyFieldValue(series.streamingServiceId), inline: false });
+  }
+  if (scheduleUrl) embed.setURL(scheduleUrl);
+  if (imageUrl) embed.setThumbnail(imageUrl);
+  return { embeds: [embed], allowedMentions: { parse: [] } };
+}
+
 function summaryDateLabel(release, settings, base = DateTime.now()) {
   const value = release?.dateTime || release?.date;
   if (!value) return "No release date";
@@ -583,10 +607,14 @@ export class DiscordService {
     const targets = normalizeChannelIds(channelIds);
     if (!targets.length) throw new Error("Discord channel id is missing.");
 
+    const excluded = new Set(normalizeChannelIds(options.excludeChannelIds));
+    const pendingTargets = targets.filter((channelId) => !excluded.has(channelId));
+    if (!pendingTargets.length) return { sent: [], failed: [] };
+
     const sent = [];
     const failed = [];
 
-    for (const channelId of targets) {
+    for (const channelId of pendingTargets) {
       try {
         const message = await this.sendToChannel(channelId, content, options);
         sent.push({ channelId, messageId: message.id });
