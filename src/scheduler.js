@@ -5,6 +5,7 @@ import {
   getNextLanguageRelease,
   getNextRelease,
   getReleasePostDateTime,
+  isUnpostedFinalMainRelease,
   releasePostKey,
   shouldPostRelease
 } from "./schedule.js";
@@ -111,7 +112,8 @@ function getComparableReleaseAfterSync(series, release, settings, now) {
 function releaseRolledForwardAfterSync(series, release, settings, now, live = {}) {
   const postedEnd = releaseEndEpisode(release);
   if (!Number.isFinite(postedEnd)) return false;
-  if (release.kind !== "language" && live.preferredReleaseFinished) return false;
+  if (release.kind !== "language" && live.preferredReleaseFinished &&
+      !isUnpostedFinalMainRelease(series, release, settings, now)) return false;
   if (release.kind !== "language" && live.mainFinished && mainReleaseAlreadyCompleted(series, release)) return false;
 
   const nextRelease = getComparableReleaseAfterSync(series, release, settings, now);
@@ -188,14 +190,14 @@ function markPostedWithoutAdvancing(series, release, postKey, now) {
   };
 }
 
-async function refreshLiveChartSeriesBeforePost(store, series, syncSeries = syncOneSeriesFromLiveChart) {
+async function refreshLiveChartSeriesBeforePost(store, series, now, syncSeries = syncOneSeriesFromLiveChart) {
   if (!isLiveChartLink(series.scheduleLink)) return { series, refreshed: false };
 
   const current = store.getSeries(series.id);
   if (!current) return { series: null, refreshed: false };
 
   try {
-    const synced = await syncSeries(store, current, { overwriteSchedule: true });
+    const synced = await syncSeries(store, current, { overwriteSchedule: true, now });
     return {
       series: synced.updated || store.getSeries(current.id) || current,
       refreshed: true,
@@ -223,7 +225,7 @@ export async function checkDueAnnouncements(store, discord, options = {}) {
     let sortedGroups = collectDueGroups(series, settings, now, postedReleaseKeys);
     if (!sortedGroups.length) continue;
 
-    const refreshed = await refreshLiveChartSeriesBeforePost(store, series, options.syncSeries);
+    const refreshed = await refreshLiveChartSeriesBeforePost(store, series, now, options.syncSeries);
     if (!refreshed.series) {
       skipped += sortedGroups.length;
       continue;

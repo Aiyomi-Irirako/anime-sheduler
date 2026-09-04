@@ -59,7 +59,7 @@ Open `Changelog` in the top navigation to review series changes from the last 7 
 
 The scheduler runs continuously while the bot is active.
 
-Before an automatic post is sent for a LiveChart-linked series, the scheduler refreshes that single series from LiveChart and recalculates whether it is still due. If LiveChart moved the episode, updated the episode number, or marked the series finished, the stale post is skipped and the stored entry is updated.
+Before an automatic post is sent for a LiveChart-linked series, the scheduler refreshes that single series from LiveChart and recalculates whether it is still due. If LiveChart moved the episode, the stale post is skipped and the stored entry is updated. If LiveChart replaces the final episode with `Released`, a known, unposted final episode remains eligible within the six-hour posting window. This also applies when a daily sync runs before the scheduler.
 
 If `REMINDER_MINUTES=0`, the bot posts at release time.
 
@@ -72,6 +72,8 @@ Automatic release posts and manual series test posts can ping selected Discord r
 Release embeds include compact plain-text copy fields for the base anime title and, when entered, its streaming service ID. Trailing labels such as specials, seasons, parts, and cours are omitted from the title field without changing the stored or displayed series title.
 
 After an automatic post, only the release that was posted is advanced. Main episodes and language versions are tracked separately.
+
+Completed series remain in `Finished` for at least one month after all tracked releases finish. A later change to the total episode count restarts the one-month retention period. Episode totals announced before completion do not shorten this period. Entries already deleted by an older version require a backup to restore.
 
 ## Slash Commands
 
