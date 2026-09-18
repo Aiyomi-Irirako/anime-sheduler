@@ -33,7 +33,7 @@ For Docker, the web import is usually easier because you can paste or upload the
 
 - `Release day` and `Time`: normal weekly schedule.
 - `Next date`: manual override for a delayed or moved episode.
-- `Episodes this release`: set this to `2` or higher when a service releases multiple episodes at once. The Discord post uses a range like `Episode 01-02`, then advances to the next episode and resets this field to `1`.
+- `Episodes this release`: set this to `2` or higher when a service releases multiple episodes at once. The Discord post uses a range like `Episode 01-02/12` when the total is known, then advances to the next episode and resets this field to `1`.
 - `Language Versions`: enable additional language versions and set their next episode numbers.
 - Language version schedules: each enabled language can have its own weekday, time, or manual next date.
 - `Auto-enabled languages`: global settings for language versions found by LiveChart.
@@ -70,6 +70,10 @@ If a release has no exact time, the bot posts it at `MISSING_TIME_POST_TIME`. Th
 Automatic release posts and manual series test posts can ping selected Discord roles. Summary posts do not ping those roles.
 
 Release embeds include compact plain-text copy fields for the base anime title and, when entered, its streaming service ID. Trailing labels such as specials, seasons, parts, and cours are omitted from the title field without changing the stored or displayed series title.
+
+Episode fields include the known total, for example `Episode 05/12`, `Episode 05-06/12`, or `Episode 03/12 (German)`. Schedule summaries and the web panel also show totals. Discord embed headings keep the current episode without the total. When the total is unknown, the label stays as `Episode 05` without a guessed denominator. Copy fields contain only the title or service ID, not episode information.
+
+The default release description distinguishes new original episodes, dub episodes, and combined releases. For example, a combined original/German release says `New original and German dub episodes are available now.` A custom series note or the missing-time fallback description still takes precedence.
 
 After an automatic post, only the release that was posted is advanced. Main episodes and language versions are tracked separately.
 

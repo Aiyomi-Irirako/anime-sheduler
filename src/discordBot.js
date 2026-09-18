@@ -21,6 +21,7 @@ import {
 import { WEEKDAYS } from "./constants.js";
 import { cleanString, normalizeHttpUrl } from "./utils.js";
 import { pickPreferredService } from "./services.js";
+import { languageLabel } from "./languages.js";
 
 function normalizeChannelIds(value) {
   const raw = Array.isArray(value) ? value : value ? [value] : [];
@@ -170,7 +171,7 @@ async function mentionRoleIdsForChannel(channel, roleIds) {
 }
 
 function releaseTitle(series, release) {
-  const entries = formatEpisodeEntries(series, release);
+  const entries = formatEpisodeEntries(series, release, { includeTotal: false });
   const entry = entries.find((item) => item.kind === "main") || entries.find((item) => item.kind === "language");
   return entry ? `${series.title} - ${entry.text}` : series.title;
 }
@@ -203,6 +204,29 @@ function releaseVersionLabel(release) {
   return "Original";
 }
 
+function releaseDescription(release) {
+  if (release?.missingTime) {
+    return "The exact release time is unknown, so this announcement uses the configured fallback time.";
+  }
+
+  const releases = release?.releases?.length ? release.releases : [release];
+  const plural = releases.length > 1 || releases.some((item) =>
+    Number.isFinite(item?.episode) && Number.isFinite(item?.episodeEnd) && item.episodeEnd > item.episode
+  );
+  const hasDub = releases.some((item) => item?.kind === "language");
+  if (!hasDub) return plural ? "New episodes are available now." : "A new episode is available now.";
+
+  const versions = [...new Set(releases.map((item) => {
+    if (item?.kind !== "language") return "original";
+    const label = item.languageLabel || languageLabel(item.languageCode);
+    return label ? `${label} dub` : "dub";
+  }))];
+  const versionText = new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(versions);
+  return plural
+    ? `New ${versionText} episodes are available now.`
+    : `A new ${versionText} episode is available now.`;
+}
+
 export function buildAnnouncement(series, release, settings) {
   const isCombinedRelease = Array.isArray(release?.releases) && release.releases.length > 1;
   const entries = formatEpisodeEntries(series, release);
@@ -217,17 +241,7 @@ export function buildAnnouncement(series, release, settings) {
   const scheduleUrl = normalizeHttpUrl(series.scheduleLink);
   const imageUrl = normalizeHttpUrl(series.imageUrl);
   const postService = pickPreferredService(series.service, series.preferredService);
-  const description = truncate(
-    series.note ||
-      (release?.missingTime
-        ? "The exact release time is unknown, so this announcement uses the configured fallback time."
-        : release?.kind === "language"
-          ? `A new ${release.languageLabel || "language"} episode is available now.`
-          : isCombinedRelease
-            ? "New versions are available now."
-            : "A new episode is available now."),
-    240
-  );
+  const description = truncate(series.note || releaseDescription(release), 240);
 
   const embed = new EmbedBuilder()
     .setColor(0x8bb4ff)
