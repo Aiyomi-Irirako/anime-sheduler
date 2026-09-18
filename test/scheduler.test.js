@@ -95,7 +95,7 @@ test("posts only the delayed dub when LiveChart marks the main series finished",
   assert.equal(result.posted, 1);
   assert.equal(messages.length, 1);
   assert.equal(announcementFieldValue(messages[0], "Version"), "German");
-  assert.equal(announcementFieldValue(messages[0], "Episode"), "Episode 12 (German)");
+  assert.equal(announcementFieldValue(messages[0], "Episode"), "Episode 12/12 (German)");
   assert.doesNotMatch(JSON.stringify(messages[0]), /Original/);
   assert.equal(postLogs[0].type, "auto-language");
 });
@@ -161,7 +161,7 @@ test("preserves an unposted final original episode when the preferred service ju
 
   assert.equal(result.posted, 1);
   assert.equal(announcementFieldValue(messages[0], "Version"), "Original");
-  assert.equal(announcementFieldValue(messages[0], "Episode"), "Episode 12");
+  assert.equal(announcementFieldValue(messages[0], "Episode"), "Episode 12/12");
 });
 
 test("drops an unpreferred Japanese broadcast after a preferred batch release finished", async () => {

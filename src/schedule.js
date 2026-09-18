@@ -361,8 +361,8 @@ export function formatReleaseDate(release, settings, includeWeekday = true) {
     : withLocale.toFormat("dd LLL yyyy HH:mm");
 }
 
-function formatSingleEpisodeEntries(release) {
-  const episodeRange = formatEpisodeRange(release);
+function formatSingleEpisodeEntries(release, episodeCount) {
+  const episodeRange = formatEpisodeRange(release, episodeCount);
   if (release?.kind === "language") {
     return episodeRange
       ? [{ text: `${episodeRange} (${release.languageLabel || languageLabel(release.languageCode)})`, kind: "language", code: release.languageCode }]
@@ -377,21 +377,23 @@ function formatSingleEpisodeEntries(release) {
   return entries.length ? entries : [{ text: "Next episode", kind: "empty" }];
 }
 
-export function formatEpisodeEntries(series, release) {
+export function formatEpisodeEntries(series, release, { includeTotal = true } = {}) {
+  const episodeCount = includeTotal ? series?.episodeCount : undefined;
   if (Array.isArray(release?.releases) && release.releases.length) {
-    const entries = release.releases.flatMap((item) => formatSingleEpisodeEntries(item));
+    const entries = release.releases.flatMap((item) => formatSingleEpisodeEntries(item, episodeCount));
     return entries.length ? entries : [{ text: "Next episode", kind: "empty" }];
   }
 
-  return formatSingleEpisodeEntries(release);
+  return formatSingleEpisodeEntries(release, episodeCount);
 }
 
-export function formatEpisodeRange(release) {
+export function formatEpisodeRange(release, episodeCount) {
   if (!Number.isFinite(release?.episode)) return "";
   const start = padEpisode(release.episode);
   const endEpisode = Number.isFinite(release.episodeEnd) ? release.episodeEnd : release.episode;
-  if (endEpisode > release.episode) return `Episode ${start}-${padEpisode(endEpisode)}`;
-  return `Episode ${start}`;
+  const total = Number.isInteger(episodeCount) && episodeCount > 0 ? `/${episodeCount}` : "";
+  if (endEpisode > release.episode) return `Episode ${start}-${padEpisode(endEpisode)}${total}`;
+  return `Episode ${start}${total}`;
 }
 
 export function formatEpisodeLabel(series, release, separator = " / ") {
