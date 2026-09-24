@@ -29,6 +29,18 @@ docker compose exec anime-sheduler pnpm run import -- /tmp/summer-2026.csv
 
 For Docker, the web import is usually easier because you can paste or upload the CSV directly.
 
+## Automatic German Releases
+
+The daily new-series check adds missing series directly to the dashboard when LiveChart lists upcoming German subtitles or German audio. There is no separate discovery tab, selection list, or approval step. Controls and the latest result are under `Settings > LiveChart`. The check is enabled by default and runs once per local day, starting at 06:00 in the configured timezone. Both daily tasks accept an hour and minute, such as 05:15. The app checks locally once per minute whether a task is due; these timer checks do not request LiveChart pages. A missed daily run is caught up when the app starts after the configured time. Existing hour-only settings become the same hour with :00 minutes.
+
+The current and next season overviews are compared with existing entries by LiveChart ID, MAL ID, or an exact title for manual entries without IDs. Only missing titles have their schedule pages requested. A German subtitle OR German dub schedule qualifies; English-only and Japanese-only releases, expired releases and already released catalogue entries do not. German announcements without a known date or episode also qualify. Audio and subtitle metadata are checked separately, including regional warnings. Existing entries and manual service IDs are never overwritten by this check.
+
+German matches are imported immediately with their German services and language tracks, and recorded in the seven-day Changelog. The normal daily sync keeps refreshing them. Dates without times retain `time missing` and the configured fallback; month/year-only dates and unconfirmed releases have no posting date until LiveChart provides a usable, confirmed schedule. Imported series retain German schedules during subsequent syncs, without substituting Japanese/English broadcasts. TVDB/TMDB IDs are not supplied by LiveChart.
+
+Only the latest run's timestamp, summary and error are retained. There is no persistent candidate list or daily history. Titles without German releases are skipped and can qualify on a later daily check if a German version is announced. The first run can take several minutes: besides the two overview pages, it needs one schedule request for each missing title and one detail request for each German match. Later runs skip already imported entries entirely. Manual checks have a one-hour cooldown; failed automatic runs are not repeatedly retried within the same local day, including after a restart.
+
+All LiveChart HTTP requests share a sequential queue with at least 6.5 seconds between requests. Detail pages use a bounded cache; schedule checks remain fresh. HTTP 403/429 or an access challenge stops further requests for at least 24 hours in that process (or longer if Retry-After requires it). This reduces load but cannot guarantee uninterrupted access. LiveChart has no public API, so HTML changes may require parser updates.
+
 ## Editing Releases
 
 - `Release day` and `Time`: normal weekly schedule.
@@ -39,13 +51,14 @@ For Docker, the web import is usually easier because you can paste or upload the
 - `Auto-enabled languages`: global settings for language versions found by LiveChart.
 - `LiveChart sync`: updates a single series from its LiveChart schedule link.
 - LiveChart sync overwrites the main release date, weekday, and time when LiveChart exposes an exact timestamp.
+- Date-only updates clear stale times; month/year-only updates clear stale posting dates. This also applies to explicitly updated dub schedules.
 - LiveChart language times: when LiveChart exposes a timestamp for a language version, the bot stores it as that language's next date and release time.
 - `Image URL`: optional poster or cover image used as a small Discord thumbnail. LiveChart sync can fill this automatically when available.
 - `Streaming service ID`: optional manual series ID for the selected posting service. LiveChart sync and CSV imports do not overwrite it.
 - `Discord announcement channels`: open a server section, then select one or more text channels the bot can access. Release posts are sent to every selected channel.
 - `Discord role mentions`: open a server section and select roles for timed main releases, language releases, and missing-time fallback posts. If the bot posts to multiple servers, select the matching role in each server.
 - `Sync LiveChart now`: updates all active series that have a LiveChart link.
-- `Update from LiveChart once per day`: runs one slow daily sync at the configured hour.
+- `Update from LiveChart once per day`: runs one slow daily sync at the configured time (hours and minutes, in the selected timezone).
 - `Continue weekly`: moves a manual `Next date` forward by 7 days after a post.
 - Missing time: the panel shows `time missing`, and the scheduler posts it at `MISSING_TIME_POST_TIME`.
 
@@ -58,6 +71,14 @@ Open `Changelog` in the top navigation to review series changes from the last 7 
 ## Discord Posting
 
 The scheduler runs continuously while the bot is active.
+
+### Test Servers
+
+Disable `Automatic Discord posts` under `Settings > Discord` to keep Discord connected without automatic episode, dub, missing-time or completion announcements. LiveChart sync and new-series checks continue normally. Manual test posts, manual summaries and slash commands remain available and can still send messages to the selected channels. Paused automatic posts do not advance episodes or mark notifications as delivered.
+
+For a dedicated test instance, set `DISCORD_AUTO_POSTS=false` in its `.env` before starting it. This server-level lock overrides the saved checkbox, including after restoring a production backup. Restart the app after changing the environment setting (recreate the container with `docker compose up -d --force-recreate` for Docker). The web panel displays the lock. Leave this variable unset or set to `true` on production to preserve normal automatic posting. In-flight Discord requests cannot be recalled; disabling automatic posts stops subsequent scheduler sends. Re-enabling can send releases still within the normal posting window and overdue completion notices.
+
+### Automatic Releases
 
 Before an automatic post is sent for a LiveChart-linked series, the scheduler refreshes that single series from LiveChart and recalculates whether it is still due. If LiveChart moved the episode, the stale post is skipped and the stored entry is updated. If LiveChart replaces the final episode with `Released`, a known, unposted final episode remains eligible within the six-hour posting window. This also applies when a daily sync runs before the scheduler.
 

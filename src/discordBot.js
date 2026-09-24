@@ -438,8 +438,9 @@ export function buildWeekdayScheduleSummary(items, settings, weekdayKey, limit =
 }
 
 export class DiscordService {
-  constructor(store) {
+  constructor(store, { commandsEnabled = true } = {}) {
     this.store = store;
+    this.commandsEnabled = commandsEnabled;
     this.client = null;
     this.ready = false;
     this.enabled = Boolean(process.env.DISCORD_TOKEN);
@@ -456,13 +457,15 @@ export class DiscordService {
     this.client.once(Events.ClientReady, async (client) => {
       this.ready = true;
       console.log(`Discord bot logged in as ${client.user.tag}`);
-      await this.registerCommands().catch((error) => {
-        console.warn(`Could not register slash commands: ${error.message}`);
-      });
+      if (this.commandsEnabled) {
+        await this.registerCommands().catch((error) => {
+          console.warn(`Could not register slash commands: ${error.message}`);
+        });
+      }
     });
 
     this.client.on(Events.InteractionCreate, async (interaction) => {
-      if (!interaction.isChatInputCommand()) return;
+      if (!this.commandsEnabled || !interaction.isChatInputCommand()) return;
 
       const data = this.store.snapshot();
       if (["upcoming", "naechste"].includes(interaction.commandName)) {
@@ -649,6 +652,6 @@ export class DiscordService {
   }
 }
 
-export function createDiscordService(store) {
-  return new DiscordService(store);
+export function createDiscordService(store, options) {
+  return new DiscordService(store, options);
 }

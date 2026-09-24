@@ -75,6 +75,13 @@ export function normalizeTime(value) {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+export function normalizeDailyTime(value, legacyHour, defaultHour = 5) {
+  const time = normalizeTime(value);
+  if (time) return time;
+  const hour = Math.min(23, Math.max(0, parseInteger(legacyHour) ?? defaultHour));
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
 export function normalizeHttpUrl(value) {
   const text = cleanString(value);
   if (!text) return "";

@@ -6,6 +6,8 @@ import {
   normalizePreferredScheduleLanguage
 } from "./languages.js";
 import { getNextRelease, isUnpostedFinalMainRelease, shouldDeleteFinishedSeries } from "./schedule.js";
+import { scheduleDateFields } from "./livechartCatalog.js";
+import { normalizeDailyTime } from "./utils.js";
 
 const WEEKDAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
@@ -27,8 +29,11 @@ function parseLiveTimestamp(value) {
 export function prepareLiveLanguageTracks(liveTracks = [], settings = {}) {
   const zone = settings.timeZone || "Europe/Berlin";
   return (Array.isArray(liveTracks) ? liveTracks : []).map((track) => {
+    if (track.requiresConfirmation) return { ...track, ...scheduleDateFields(null, zone) };
     const timestamp = parseLiveTimestamp(track.releaseTimestamp);
-    if (timestamp === null) return track;
+    if (timestamp === null) return Object.hasOwn(track, 'schedulePrecision') ? { ...track, ...scheduleDateFields({
+      timestamp: Number.MAX_SAFE_INTEGER, partialDate: track.releaseDate
+    }, zone) } : track;
 
     const releaseAt = DateTime.fromMillis(timestamp * 1000, { zone: "utc" }).setZone(zone);
     if (!releaseAt.isValid) return track;
@@ -42,8 +47,11 @@ export function prepareLiveLanguageTracks(liveTracks = [], settings = {}) {
 }
 
 export function prepareLiveMainSchedule(live = {}, settings = {}) {
+  if (live.mainReleaseUnconfirmed || live.mainEpisodeUnknown) return scheduleDateFields(null);
   const timestamp = parseLiveTimestamp(live.mainReleaseTimestamp);
-  if (timestamp === null) return {};
+  if (timestamp === null) return live.mainScheduleKnown ? scheduleDateFields({
+    timestamp: Number.MAX_SAFE_INTEGER, partialDate: live.mainReleaseDate
+  }, settings.timeZone || 'Europe/Berlin') : {};
 
   const zone = settings.timeZone || "Europe/Berlin";
   const releaseAt = DateTime.fromMillis(timestamp * 1000, { zone: "utc" }).setZone(zone);
@@ -92,18 +100,22 @@ function hasChanged(series, patch) {
 export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
   const settings = store.getSettings();
   const now = options.now || DateTime.now();
-  const preferredScheduleLanguage = normalizePreferredScheduleLanguage(settings.preferredScheduleLanguage);
-  const live = await fetchLiveChartEpisodes(series.scheduleLink, {
+  const preferredScheduleLanguage = normalizePreferredScheduleLanguage(series.liveChartImportLanguage || settings.preferredScheduleLanguage);
+  const live = await (options.fetchEpisodes || fetchLiveChartEpisodes)(series.scheduleLink, {
     preferredLanguageCodes: preferredScheduleLanguage ? [preferredScheduleLanguage] : [],
+    timeZone: settings.timeZone,
+    requirePreferredLanguage: series.liveChartLanguageStrict,
     nowTimestamp: Math.floor(now.toSeconds())
   });
   const overwriteSchedule = Boolean(options.overwriteSchedule);
-  const liveMainSchedule = overwriteSchedule ? prepareLiveMainSchedule(live, settings) : {};
-  const liveLanguageTracks = prepareLiveLanguageTracks(live.languageTracks || [], settings);
+  const liveMainSchedule = overwriteSchedule ? live.mainUnavailable
+    ? { nextDate: '', releaseDay: '', releaseTime: '' } : prepareLiveMainSchedule(live, settings) : {};
+  const liveLanguageTracks = prepareLiveLanguageTracks((live.languageTracks || [])
+    .filter((track) => !series.liveChartImportLanguage || track.code === series.liveChartImportLanguage), settings);
   const languageTracks = mergeLanguageTracks(
     series.languageTracks || [],
     liveLanguageTracks,
-    settings.enabledLanguageCodes || []
+    series.liveChartImportLanguage ? [series.liveChartImportLanguage] : settings.enabledLanguageCodes || []
   );
   const episodeCount = Number.isFinite(live.episodeCount) ? live.episodeCount : series.episodeCount;
   const pendingFinal = live.mainFinished && isUnpostedFinalMainRelease(
@@ -113,7 +125,7 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
     now
   );
   const mainFinished = live.mainFinished && !pendingFinal;
-  const nextEpisode = Number.isFinite(live.nextEpisode) ? live.nextEpisode : mainFinished ? null : series.nextEpisode;
+  const nextEpisode = live.mainUnavailable || live.mainEpisodeUnknown ? null : Number.isFinite(live.nextEpisode) ? live.nextEpisode : mainFinished ? null : series.nextEpisode;
   const episodeBatchSize =
     overwriteSchedule && Number.isFinite(live.nextEpisode)
       ? live.episodeBatchSize
@@ -132,9 +144,9 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
     nextEpisode,
     episodeBatchSize,
     episodeCount,
-    releaseDay: liveMainSchedule.releaseDay || series.releaseDay,
-    releaseTime: liveMainSchedule.releaseTime || series.releaseTime,
-    nextDate: mainFinished && overwriteSchedule ? "" : liveMainSchedule.nextDate || series.nextDate,
+    releaseDay: liveMainSchedule.releaseDay ?? series.releaseDay,
+    releaseTime: liveMainSchedule.releaseTime ?? series.releaseTime,
+    nextDate: mainFinished && overwriteSchedule ? "" : liveMainSchedule.nextDate ?? series.nextDate,
     imageUrl: overwriteSchedule && live.imageUrl ? live.imageUrl : series.imageUrl || live.imageUrl,
     languageTracks,
     lastLiveChartCheckedAt: now.toISO()
@@ -223,7 +235,7 @@ export async function syncAllLiveChart(store, options = {}) {
         title: series.title,
         message: error.message
       });
-      if (error.status === 429) {
+      if ([403, 429].includes(error.status)) {
         result.rateLimited = true;
         break;
       }
@@ -260,8 +272,8 @@ export function shouldRunDailyLiveChartSync(settings, base = DateTime.now()) {
 
   const zone = settings.timeZone || "Europe/Berlin";
   const now = base.setZone(zone);
-  const hour = Math.min(23, Math.max(0, Number(settings.liveChartSyncHour ?? 5)));
-  if (now.hour < hour) return false;
+  const [hour, minute] = normalizeDailyTime(settings.liveChartSyncTime, settings.liveChartSyncHour, 5).split(":").map(Number);
+  if (now.hour * 60 + now.minute < hour * 60 + minute) return false;
 
   if (!settings.lastLiveChartSyncAt) return true;
 
@@ -288,7 +300,7 @@ export function startLiveChartDailySync(store) {
     }
   };
 
-  const timer = setInterval(runIfDue, 15 * 60 * 1000);
+  const timer = setInterval(runIfDue, 60 * 1000);
   runIfDue();
   return timer;
 }
