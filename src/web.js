@@ -27,6 +27,8 @@ import {
   normalizePreferredScheduleLanguage
 } from "./languages.js";
 import { normalizePreferredService, pickPreferredService, serviceStyle, splitServiceNames } from "./services.js";
+import { getDiscoveryController } from "./livechartDiscovery.js";
+import { automaticPostsEnabled, automaticPostsLocked } from "./discordPosting.js";
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 const upload = multer({
@@ -281,6 +283,11 @@ function renderDiscordChannelSettings(settings, channelGroups, discordEnabled) {
     .join("");
 
   return `<div class="span-2 channel-picker">
+    <label class="check boxed-check">
+      <input type="checkbox" name="automaticDiscordPostsEnabled" ${toFormBoolean(automaticPostsEnabled(settings))} ${automaticPostsLocked() ? 'disabled' : ''}>
+      <span>Automatic Discord posts</span>
+    </label>
+    ${automaticPostsLocked() ? '<div class="notice">Automatic posts disabled by server configuration (DISCORD_AUTO_POSTS=false).</div>' : ''}
     <div class="field-label">Discord announcement channels</div>
     <input type="hidden" name="discordChannelIds" value="">
     ${groups}
@@ -485,8 +492,8 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
         <span>Update from LiveChart once per day</span>
       </label>
       <label>
-        <span>LiveChart sync hour</span>
-        <input type="number" min="0" max="23" name="liveChartSyncHour" value="${escapeHtml(settings.liveChartSyncHour)}">
+        <span>LiveChart sync time</span>
+        <input type="time" step="60" name="liveChartSyncTime" value="${escapeHtml(settings.liveChartSyncTime)}" required>
       </label>
       <label>
         <span>Last LiveChart sync</span>
@@ -494,6 +501,24 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
       </label>
       <div class="form-actions span-2">
         <button type="submit" class="button secondary" name="settingsAction" value="sync-livechart">Sync LiveChart now</button>
+      </div>
+      <label class="check span-2 boxed-check">
+        <input type="checkbox" name="liveChartDiscoveryEnabled" ${toFormBoolean(settings.liveChartDiscoveryEnabled)}>
+        <span>Automatically add new series with German subtitles or German audio</span>
+      </label>
+      <label>
+        <span>Daily new-series check time</span>
+        <input type="time" step="60" name="liveChartDiscoveryTime" value="${escapeHtml(settings.liveChartDiscoveryTime)}" required>
+      </label>
+      <label>
+        <span>Last new-series check</span>
+        <input value="${escapeHtml(dataStats.discovery?.lastAttemptAt ? formatChangelogDate(dataStats.discovery.lastAttemptAt, settings) : 'Not checked yet')}" readonly>
+      </label>
+      <div class="span-2" role="status" id="newSeriesStatus">${escapeHtml(dataStats.discoveryStatus?.running
+        ? dataStats.discoveryStatus.progress : dataStats.discovery?.summary || '')}</div>
+      ${dataStats.discovery?.error || dataStats.discoveryStatus?.error ? `<div class="notice error span-2">${escapeHtml(dataStats.discoveryStatus?.error || dataStats.discovery.error)}</div>` : ''}
+      <div class="form-actions span-2">
+        <button type="submit" class="button secondary" name="settingsAction" value="discover-livechart" ${dataStats.discoveryStatus?.running ? 'disabled' : ''}>Check and add new series now</button>
       </div>
     </div>`;
 
@@ -538,7 +563,19 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
       ${renderBackupPanel(dataStats)}
     </div>
   </section>
-  ${renderSettingsScript()}`;
+  ${renderSettingsScript()}
+  ${dataStats.discoveryStatus?.running ? `<script>
+    const pollNewSeries = async () => {
+      try {
+        const response = await fetch('/api/livechart/status');
+        if (!response.ok) throw new Error('Status unavailable');
+        const job = await response.json();
+        if (!job.running) return location.reload();
+        document.getElementById('newSeriesStatus').textContent = job.progress;
+      } catch { /* Retain the current status during a temporary connection failure. */ }
+      setTimeout(pollNewSeries, 3000);
+    }; setTimeout(pollNewSeries, 3000);
+  </script>` : ''}`;
 }
 
 function renderImportPanel() {
@@ -897,6 +934,7 @@ function changelogSourceLabel(source) {
   const labels = {
     manual: "Manual",
     "csv-import": "CSV import",
+    "livechart-import": "LiveChart import",
     "livechart-sync": "LiveChart sync",
     "pre-post-livechart-sync": "Pre-post sync",
     "scheduler-post": "Scheduler post",
@@ -1022,7 +1060,7 @@ function renderChangelogPage(data, query) {
   );
 }
 
-function renderSettingsPage(data, discordEnabled, query, channelGroups = [], roleGroups = []) {
+function renderSettingsPage(data, discordEnabled, query, channelGroups = [], roleGroups = [], discoveryStatus = {}) {
   return renderPage(
     "Settings",
     `${messageFromQuery(query)}
@@ -1038,7 +1076,9 @@ function renderSettingsPage(data, discordEnabled, query, channelGroups = [], rol
     <div class="settings-layout">
       ${renderSettings(data.settings, discordEnabled, channelGroups, roleGroups, {
         series: data.series.length,
-        posts: data.posts.length
+        posts: data.posts.length,
+        discovery: data.liveChartDiscovery,
+        discoveryStatus
       })}
     </div>`
   );
@@ -1290,12 +1330,15 @@ function formToSeries(body, id = "") {
   };
 }
 
-export function createWebApp(store, discord, rootDir = process.cwd()) {
+export function createWebApp(store, discord, rootDir = process.cwd(), options = {}) {
   const app = express();
   app.use(express.urlencoded({ extended: false, limit: "5mb" }));
   app.use(express.json({ limit: "2mb" }));
   app.use(express.static(path.join(rootDir, "public")));
   app.use(requireBasicAuth);
+  const discovery = options.discovery || getDiscoveryController(store);
+  app.get('/livechart', (req, res) => res.redirect('/settings#settings-livechart'));
+  app.get('/api/livechart/status', (req, res) => res.json(discovery.status()));
 
   app.get(
     "/",
@@ -1331,14 +1374,25 @@ export function createWebApp(store, discord, rootDir = process.cwd()) {
           return [];
         })
       ]);
-      res.send(renderSettingsPage(store.snapshot(), discord.enabled, req.query, channelGroups, roleGroups));
+      res.send(renderSettingsPage(store.snapshot(), discord.enabled, req.query, channelGroups, roleGroups, discovery.status()));
     })
   );
 
   app.post(
     "/settings",
     asyncRoute(async (req, res) => {
-      await store.updateSettings(req.body);
+      await store.updateSettings({ ...req.body,
+        liveChartDiscoveryEnabled: Boolean(req.body.liveChartDiscoveryEnabled),
+        automaticDiscordPostsEnabled: Boolean(req.body.automaticDiscordPostsEnabled)
+      });
+      if (cleanString(req.body.settingsAction) === 'discover-livechart') {
+        try {
+          discovery.start();
+          return res.redirect('/settings#settings-livechart');
+        } catch (error) {
+          return redirectToSettings(res, 'livechart', 'error', error.message);
+        }
+      }
       if (cleanString(req.body.settingsAction) === "sync-livechart") {
         try {
           const result = await syncAllLiveChart(store);

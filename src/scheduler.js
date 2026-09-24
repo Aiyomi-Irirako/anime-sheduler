@@ -15,6 +15,7 @@ import { buildAnnouncement, buildCompletionAnnouncement, releaseMentionRoleIds }
 import { enabledLanguageTracks } from "./languages.js";
 import { isLiveChartLink, syncOneSeriesFromLiveChart } from "./livechartSync.js";
 import { cleanString } from "./utils.js";
+import { automaticPostsEnabled } from "./discordPosting.js";
 
 function releaseDedupeKey(series, release, settings) {
   const releaseAt = getReleasePostDateTime(release, settings);
@@ -112,6 +113,7 @@ function getComparableReleaseAfterSync(series, release, settings, now) {
 }
 
 function releaseRolledForwardAfterSync(series, release, settings, now, live = {}) {
+  if (release.kind !== 'language' && (live.mainUnavailable || live.mainReleaseUnconfirmed || live.mainEpisodeUnknown)) return false;
   const postedEnd = releaseEndEpisode(release);
   if (!Number.isFinite(postedEnd)) return false;
   if (release.kind !== "language" && live.preferredReleaseFinished &&
@@ -217,12 +219,14 @@ export async function checkDueAnnouncements(store, discord, options = {}) {
 
   const data = store.snapshot();
   const settings = data.settings;
+  if (!automaticPostsEnabled(settings)) return { posted: 0, skipped: 0, reason: "automatic_posts_disabled" };
   const now = (options.now || DateTime.now()).setZone(settings.timeZone || "Europe/Berlin");
   const postedReleaseKeys = new Set();
   let posted = 0;
   let skipped = 0;
 
   for (const initialSeries of data.series) {
+    if (!automaticPostsEnabled(store.getSettings?.() || settings)) return { posted, skipped, reason: "automatic_posts_disabled" };
     let series = initialSeries;
     let sortedGroups = collectDueGroups(series, settings, now, postedReleaseKeys);
     if (!sortedGroups.length) continue;
@@ -242,6 +246,8 @@ export async function checkDueAnnouncements(store, discord, options = {}) {
     }
 
     for (const group of sortedGroups) {
+      // Settings can change while the pre-post LiveChart request is in flight.
+      if (!automaticPostsEnabled(store.getSettings?.() || settings)) return { posted, skipped, reason: "automatic_posts_disabled" };
       const announcementRelease = buildAnnouncementRelease(group);
       const message = buildAnnouncement(series, announcementRelease, settings);
       await discord.post(message, undefined, { mentionRoleIds: releaseMentionRoleIds(announcementRelease, settings) });
@@ -293,11 +299,13 @@ export async function checkCompletionAnnouncements(store, discord, options = {})
   if (!discord.enabled || !discord.ready) return { posted: 0, failed: 0, reason: "discord_not_ready" };
 
   const { settings, series: entries } = store.snapshot();
+  if (!automaticPostsEnabled(settings)) return { posted: 0, failed: 0, reason: "automatic_posts_disabled" };
   const now = (options.now || DateTime.now()).setZone(settings.timeZone || "Europe/Berlin");
   let posted = 0;
   let failed = 0;
 
   for (const entry of entries) {
+    if (!automaticPostsEnabled(store.getSettings?.() || settings)) return { posted, failed, reason: "automatic_posts_disabled" };
     const series = store.getSeries(entry.id);
     if (!series || !shouldNotifyCompletion(series, settings, now)) continue;
 

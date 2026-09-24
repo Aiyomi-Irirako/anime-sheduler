@@ -154,6 +154,9 @@ export function mergeLanguageTracks(existingTracks, incomingTracks, enabledLangu
   const incomingByCode = new Map(
     normalizeLanguageTracks(incomingTracks).map((track) => [track.code, track])
   );
+  const explicitDates = new Set((incomingTracks || [])
+    .filter((track) => Object.hasOwn(track, 'nextDate'))
+    .map((track) => normalizeLanguageCode(track.code)));
   const codes = new Set([...existingByCode.keys(), ...incomingByCode.keys()]);
 
   return [...codes].map((code) => {
@@ -166,9 +169,9 @@ export function mergeLanguageTracks(existingTracks, incomingTracks, enabledLangu
         available: incoming?.available ?? existing?.available ?? true,
         nextEpisode: incoming?.nextEpisode ?? existing?.nextEpisode,
         episodeBatchSize: incoming ? incoming.episodeBatchSize : existing?.episodeBatchSize,
-        releaseDay: incoming?.releaseDay || existing?.releaseDay,
-        releaseTime: incoming?.releaseTime || existing?.releaseTime,
-        nextDate: incoming?.nextDate || existing?.nextDate,
+        releaseDay: explicitDates.has(code) ? incoming.releaseDay : incoming?.releaseDay || existing?.releaseDay,
+        releaseTime: explicitDates.has(code) ? incoming.releaseTime : incoming?.releaseTime || existing?.releaseTime,
+        nextDate: explicitDates.has(code) ? incoming.nextDate : incoming?.nextDate || existing?.nextDate,
         weekly: existing?.weekly ?? incoming?.weekly ?? true,
         lastPostedKey: existing?.lastPostedKey,
         lastPostedAt: existing?.lastPostedAt,

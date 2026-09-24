@@ -7,6 +7,7 @@ import {
   cleanString,
   createId,
   normalizeDate,
+  normalizeDailyTime,
   normalizeEpisodeBatchSize,
   normalizeHttpUrl,
   normalizeTime,
@@ -20,6 +21,7 @@ import {
   normalizePreferredScheduleLanguage
 } from "./languages.js";
 import { normalizePreferredService, normalizeServiceList } from "./services.js";
+import { normalizeDiscoverySeason, normalizeDiscoveryState } from "./livechartDiscovery.js";
 
 function normalizeDiscordChannelIds(value) {
   const raw = Array.isArray(value) ? value : value ? [value] : [];
@@ -51,10 +53,16 @@ const DEFAULT_DATA = {
     reminderMinutes: Number.parseInt(process.env.REMINDER_MINUTES || "0", 10),
     lookaheadDays: 14,
     schedulerIntervalSeconds: 60,
+    automaticDiscordPostsEnabled: true,
     summaryLimit: 12,
     missingTimePostTime: normalizeTime(process.env.MISSING_TIME_POST_TIME) || "18:00",
     liveChartSyncEnabled: true,
     liveChartSyncHour: 5,
+    liveChartSyncTime: "05:00",
+    liveChartDiscoveryEnabled: true,
+    liveChartDiscoveryHour: 6,
+    liveChartDiscoveryTime: "06:00",
+    liveChartDiscoverySeason: "auto",
     preferredScheduleLanguage: "de",
     enabledLanguageCodes: ["de"],
     lastLiveChartSyncAt: "",
@@ -62,6 +70,7 @@ const DEFAULT_DATA = {
   },
   series: [],
   posts: [],
+  liveChartDiscovery: normalizeDiscoveryState(),
   changeLog: []
 };
 
@@ -246,6 +255,7 @@ function normalizeStoreData(input = {}) {
       : data.settings.discordMissingTimeRoleId || process.env.DISCORD_MISSING_TIME_ROLE_ID
   );
   data.settings.enabledLanguageCodes = normalizeEnabledLanguageCodes(data.settings.enabledLanguageCodes);
+  data.settings.automaticDiscordPostsEnabled = parseBoolean(data.settings.automaticDiscordPostsEnabled);
   data.settings.preferredScheduleLanguage = Object.prototype.hasOwnProperty.call(
     settingsSource,
     "preferredScheduleLanguage"
@@ -254,6 +264,13 @@ function normalizeStoreData(input = {}) {
     : data.settings.enabledLanguageCodes[0] || "";
   data.series = Array.isArray(data.series) ? data.series.map((item) => normalizeSeries(item, item)) : [];
   data.posts = Array.isArray(data.posts) ? data.posts : [];
+  data.liveChartDiscovery = normalizeDiscoveryState(data.liveChartDiscovery);
+  data.settings.liveChartDiscoverySeason = normalizeDiscoverySeason(data.settings.liveChartDiscoverySeason);
+  data.settings.liveChartDiscoveryEnabled = parseBoolean(data.settings.liveChartDiscoveryEnabled);
+  data.settings.liveChartSyncTime = normalizeDailyTime(settingsSource.liveChartSyncTime, settingsSource.liveChartSyncHour, 5);
+  data.settings.liveChartDiscoveryTime = normalizeDailyTime(settingsSource.liveChartDiscoveryTime, settingsSource.liveChartDiscoveryHour, 6);
+  data.settings.liveChartSyncHour = Number(data.settings.liveChartSyncTime.split(":")[0]);
+  data.settings.liveChartDiscoveryHour = Number(data.settings.liveChartDiscoveryTime.split(":")[0]);
   data.changeLog = pruneChangeLog(data.changeLog)
     .map(normalizeChangeLogEntry)
     .filter((entry) => entry.action !== "updated" || entry.changes.length);
@@ -353,6 +370,8 @@ function normalizeSeries(input, existing = {}) {
       input.completionNotifiedChannelIds ?? existing.completionNotifiedChannelIds
     ),
     lastLiveChartCheckedAt: cleanString(input.lastLiveChartCheckedAt || existing.lastLiveChartCheckedAt),
+    liveChartLanguageStrict: parseBoolean(input.liveChartLanguageStrict ?? existing.liveChartLanguageStrict),
+    liveChartImportLanguage: normalizePreferredScheduleLanguage(input.liveChartImportLanguage ?? existing.liveChartImportLanguage),
     createdAt: existing.createdAt || input.createdAt || now,
     updatedAt: now
   };
@@ -408,6 +427,7 @@ export class Store {
   constructor(filePath) {
     this.filePath = filePath;
     this.data = null;
+    this.saveQueue = Promise.resolve();
   }
 
   async init() {
@@ -457,10 +477,24 @@ export class Store {
 
   async save() {
     this.pruneChangeLog();
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tmp = `${this.filePath}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(this.data, null, 2), "utf8");
-    await fs.rename(tmp, this.filePath);
+    const serialized = JSON.stringify(this.data, null, 2);
+    const operation = this.saveQueue.then(async () => {
+      await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+      const tmp = `${this.filePath}.${process.pid}.tmp`;
+      await fs.writeFile(tmp, serialized, "utf8");
+      await fs.rename(tmp, this.filePath);
+    });
+    this.saveQueue = operation.catch(() => {});
+    await operation;
+  }
+
+  getDiscovery() {
+    return clone(this.data.liveChartDiscovery);
+  }
+
+  async updateDiscovery(patch) {
+    this.data.liveChartDiscovery = normalizeDiscoveryState({ ...this.data.liveChartDiscovery, ...patch });
+    await this.save();
   }
 
   getSettings() {
@@ -469,6 +503,10 @@ export class Store {
 
   async updateSettings(patch) {
     const discordChannelIds = normalizeDiscordChannelIds(patch.discordChannelIds);
+    const liveChartSyncTime = normalizeTime(patch.liveChartSyncTime) ||
+      (patch.liveChartSyncHour === undefined ? this.data.settings.liveChartSyncTime : normalizeDailyTime(null, patch.liveChartSyncHour, 5));
+    const liveChartDiscoveryTime = normalizeTime(patch.liveChartDiscoveryTime) ||
+      (patch.liveChartDiscoveryHour === undefined ? this.data.settings.liveChartDiscoveryTime : normalizeDailyTime(null, patch.liveChartDiscoveryHour, 6));
     this.data.settings = {
       ...this.data.settings,
       timeZone: cleanString(patch.timeZone) || this.data.settings.timeZone,
@@ -480,10 +518,17 @@ export class Store {
       reminderMinutes: Math.max(0, parseInteger(patch.reminderMinutes) ?? 0),
       lookaheadDays: Math.max(1, parseInteger(patch.lookaheadDays) ?? 14),
       schedulerIntervalSeconds: Math.max(30, parseInteger(patch.schedulerIntervalSeconds) ?? 60),
+      automaticDiscordPostsEnabled: patch.automaticDiscordPostsEnabled === undefined
+        ? this.data.settings.automaticDiscordPostsEnabled : parseBoolean(patch.automaticDiscordPostsEnabled),
       summaryLimit: Math.max(1, parseInteger(patch.summaryLimit) ?? 12),
       missingTimePostTime: normalizeTime(patch.missingTimePostTime) || this.data.settings.missingTimePostTime || "18:00",
       liveChartSyncEnabled: parseBoolean(patch.liveChartSyncEnabled),
-      liveChartSyncHour: Math.min(23, Math.max(0, parseInteger(patch.liveChartSyncHour) ?? 5)),
+      liveChartSyncTime,
+      liveChartSyncHour: Number(liveChartSyncTime.split(":")[0]),
+      liveChartDiscoveryEnabled: patch.liveChartDiscoveryEnabled === undefined
+        ? this.data.settings.liveChartDiscoveryEnabled : parseBoolean(patch.liveChartDiscoveryEnabled),
+      liveChartDiscoveryTime,
+      liveChartDiscoveryHour: Number(liveChartDiscoveryTime.split(":")[0]),
       preferredScheduleLanguage:
         patch.preferredScheduleLanguage === undefined
           ? this.data.settings.preferredScheduleLanguage
