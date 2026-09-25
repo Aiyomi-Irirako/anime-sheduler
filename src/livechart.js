@@ -1,8 +1,9 @@
 import { languageLabel, normalizeLanguageCode } from "./languages.js";
 import { normalizeServiceName, normalizeServiceList } from "./services.js";
 import { parseScheduleRows, isUpcomingSchedule } from "./livechartCatalog.js";
-import { fetchLiveChartHtml } from "./livechartHttp.js";
+import { fetchLiveChartHtml, liveChartId } from "./livechartHttp.js";
 import { DateTime } from "luxon";
+import { load } from "cheerio";
 
 function decodeHtml(value) {
   return String(value || "")
@@ -22,15 +23,23 @@ function absoluteUrl(value, baseUrl) {
 }
 
 function liveChartAnimeUrl(scheduleLink) {
-  try {
-    const url = new URL(scheduleLink);
-    url.pathname = url.pathname.replace(/\/schedules\/?$/i, "");
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return "";
-  }
+  const id = liveChartId(scheduleLink);
+  return id ? `https://www.livechart.me/anime/${id}` : "";
+}
+
+export function parseLiveChartTitle(html) {
+  const $ = load(html);
+  const title = $('meta[property="og:title"]').attr('content') || $('h1').first().text() || $('title').text();
+  return String(title || '').replace(/\s*\|\s*LiveChart\.me\s*$/i, '')
+    .replace(/\s+-\s+Release Schedules\s*$/i, '').replace(/\s+/g, ' ').trim();
+}
+
+export async function fetchLiveChartTitle(scheduleLink, { fetchHtml = fetchLiveChartHtml } = {}) {
+  const url = liveChartAnimeUrl(scheduleLink);
+  if (!url) throw new Error("Enter a valid LiveChart anime link.");
+  const title = parseLiveChartTitle(await fetchHtml(url, { ttlMs: 24 * 3600000 }));
+  if (!title || /^LiveChart\.me$/i.test(title)) throw new Error("No series title could be read from LiveChart. Enter it manually or try again later.");
+  return title;
 }
 
 function parseLiveChartImage(html, baseUrl) {

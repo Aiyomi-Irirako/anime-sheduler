@@ -43,6 +43,8 @@ All LiveChart HTTP requests share a sequential queue with at least 6.5 seconds b
 
 ## Editing Releases
 
+- `New Series`: paste a LiveChart anime or schedule link to load the title automatically. A typed title is preserved. Without a LiveChart link, enter a title manually. Failed lookups retain the form without creating an empty entry.
+- Duplicate protection applies to manual saves, CSV imports and automatic discovery. LiveChart URL variants for the same anime and matching MAL IDs identify the same series; otherwise normalized exact titles are compared unless both entries have different source IDs. Separate seasons are not matched by fuzzy title rules. Manual duplicates open the existing entry without overwriting it. Older duplicates in backups are not silently deleted.
 - `Release day` and `Time`: normal weekly schedule.
 - `Next date`: manual override for a delayed or moved episode.
 - `Episodes this release`: set this to `2` or higher when a service releases multiple episodes at once. The Discord post uses a range like `Episode 01-02/12` when the total is known, then advances to the next episode and resets this field to `1`.

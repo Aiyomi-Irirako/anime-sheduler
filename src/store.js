@@ -22,6 +22,7 @@ import {
 } from "./languages.js";
 import { normalizePreferredService, normalizeServiceList } from "./services.js";
 import { normalizeDiscoverySeason, normalizeDiscoveryState } from "./livechartDiscovery.js";
+import { findDuplicateSeries, seriesIdentity } from "./seriesIdentity.js";
 
 function normalizeDiscordChannelIds(value) {
   const raw = Array.isArray(value) ? value : value ? [value] : [];
@@ -276,12 +277,6 @@ function normalizeStoreData(input = {}) {
     .filter((entry) => entry.action !== "updated" || entry.changes.length);
 
   return data;
-}
-
-function seriesImportKey(series) {
-  const scheduleLink = cleanString(series.scheduleLink).toLowerCase().replace(/\/+$/, "");
-  if (scheduleLink) return `schedule:${scheduleLink}`;
-  return `title-service:${cleanString(series.title).toLowerCase()}|${normalizeServiceList(series.service).toLowerCase()}`;
 }
 
 function normalizeSeries(input, existing = {}) {
@@ -552,9 +547,22 @@ export class Store {
     return this.data.series.find((series) => series.id === id) || null;
   }
 
+  assertUniqueSeries(candidate, existing) {
+    // Existing duplicates from older backups remain editable until explicitly cleaned up.
+    if (existing && JSON.stringify(seriesIdentity(candidate)) === JSON.stringify(seriesIdentity(existing))) return;
+    const duplicate = findDuplicateSeries(this.data.series, candidate, existing?.id);
+    if (!duplicate) return;
+    const error = new Error(`Series already exists: ${duplicate.title}`);
+    error.code = "DUPLICATE_SERIES";
+    error.existingSeriesId = duplicate.id;
+    throw error;
+  }
+
   async upsertSeries(input, options = {}) {
     const existing = input.id ? this.getSeries(input.id) : null;
     const normalized = normalizeSeries(input, existing || {});
+    if (!normalized.title) throw new Error("A series title is required.");
+    this.assertUniqueSeries(normalized, existing);
     const source = cleanString(options.source) || "manual";
 
     if (existing) {
@@ -575,6 +583,7 @@ export class Store {
     if (index === -1) return null;
     const existing = this.data.series[index];
     const normalized = normalizeSeries(nextSeries, existing);
+    this.assertUniqueSeries(normalized, existing);
     this.data.series[index] = normalized;
     this.recordSeriesChange("updated", cleanString(options.source) || "manual", existing, normalized);
     await this.save();
@@ -595,14 +604,12 @@ export class Store {
 
   async importCsv(csvText, options = {}) {
     const incoming = parseSeriesCsv(csvText);
-    const existingByKey = new Map(this.data.series.map((series) => [seriesImportKey(series), series]));
     let created = 0;
     let updated = 0;
     let skipped = 0;
 
     for (const series of incoming) {
-      const key = seriesImportKey(series);
-      const existing = existingByKey.get(key);
+      const existing = findDuplicateSeries(this.data.series, series);
 
       if (existing && !options.updateExisting) {
         skipped += 1;
@@ -614,12 +621,10 @@ export class Store {
         const merged = mergeImportedSeries(existing, series, options);
         this.data.series[index] = merged;
         this.recordSeriesChange("updated", "csv-import", existing, merged);
-        existingByKey.set(key, merged);
         updated += 1;
       } else {
         const normalized = normalizeSeries(series);
         this.data.series.push(normalized);
-        existingByKey.set(key, normalized);
         this.recordSeriesChange("created", "csv-import", null, normalized);
         created += 1;
       }

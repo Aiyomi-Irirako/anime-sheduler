@@ -29,6 +29,9 @@ import {
 import { normalizePreferredService, pickPreferredService, serviceStyle, splitServiceNames } from "./services.js";
 import { getDiscoveryController } from "./livechartDiscovery.js";
 import { automaticPostsEnabled, automaticPostsLocked } from "./discordPosting.js";
+import { fetchLiveChartTitle } from "./livechart.js";
+import { liveChartId } from "./livechartHttp.js";
+import { findDuplicateSeries } from "./seriesIdentity.js";
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 const upload = multer({
@@ -1168,6 +1171,71 @@ function renderSeriesLifecyclePanel(series, settings) {
   </section>`;
 }
 
+function renderNewSeriesScript() {
+  return `<script>
+    (() => {
+      const form = document.getElementById('series-form');
+      const link = form.elements.scheduleLink;
+      const title = form.elements.title;
+      const status = document.getElementById('series-title-status');
+      let timer, sequence = 0, automaticTitle = '', requestedId = '';
+      const animeId = () => {
+        try {
+          const url = new URL(link.value.trim());
+          if (!['http:', 'https:'].includes(url.protocol) || url.port || url.username || url.password ||
+              !['livechart.me', 'www.livechart.me'].includes(url.hostname)) return '';
+          return url.pathname.match(/^\\/anime\\/(\\d+)(?:\\/|$)/)?.[1] || '';
+        } catch { return ''; }
+      };
+      const lookup = async () => {
+        const id = animeId();
+        if (!id || id === requestedId || (title.value.trim() && title.value !== automaticTitle)) return;
+        requestedId = id;
+        const current = ++sequence;
+        const originalLink = link.value;
+        status.textContent = 'Loading title...';
+        try {
+          const response = await fetch('/api/livechart/title', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scheduleLink: originalLink }) });
+          const data = await response.json();
+          if (current !== sequence || link.value !== originalLink) return;
+          if (data.existingSeriesId) {
+            status.textContent = 'Series already exists: ';
+            const existing = document.createElement('a');
+            existing.href = '/series/' + encodeURIComponent(data.existingSeriesId);
+            existing.textContent = data.title;
+            status.append(existing);
+            return;
+          }
+          if (!response.ok) throw new Error(data.error || 'Could not load the title.');
+          if (!title.value.trim() || title.value === automaticTitle) {
+            title.value = data.title;
+            automaticTitle = data.title;
+          }
+          status.textContent = '';
+        } catch (error) {
+          if (current !== sequence) return;
+          requestedId = '';
+          status.textContent = error.message;
+        }
+      };
+      link.addEventListener('input', () => {
+        clearTimeout(timer);
+        sequence += 1;
+        requestedId = '';
+        if (automaticTitle && title.value === automaticTitle) title.value = '';
+        automaticTitle = '';
+        title.required = !animeId();
+        status.textContent = '';
+        timer = setTimeout(lookup, 700);
+      });
+      link.addEventListener('change', () => { clearTimeout(timer); lookup(); });
+      title.required = !animeId();
+      lookup();
+    })();
+  </script>`;
+}
+
 function renderSeriesForm(series, settings, query, isNew = false, discordEnabled = true) {
   const release = getNextRelease(series, settings);
   const action = isNew ? "/series" : `/series/${encodeURIComponent(series.id)}`;
@@ -1184,10 +1252,15 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
         </div>
         <a class="button secondary" href="/">Back</a>
       </div>
-      <form class="grid-form edit-form" method="post" action="${action}">
+      <form id="series-form" class="grid-form edit-form" method="post" action="${action}">
+        ${isNew ? `<label class="span-2">
+          <span>LiveChart link</span>
+          <input name="scheduleLink" value="${escapeHtml(series.scheduleLink)}" placeholder="https://www.livechart.me/anime/123/schedules">
+        </label>` : ''}
         <label class="span-2">
           <span>Title</span>
-          <input name="title" required value="${escapeHtml(series.title)}">
+          <input name="title" ${isNew ? '' : 'required'} value="${escapeHtml(series.title)}">
+          ${isNew ? '<span id="series-title-status" role="status"></span>' : ''}
         </label>
         <label>
           <span>Service</span>
@@ -1233,10 +1306,10 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
           <span>Total episodes</span>
           <input type="number" min="0" name="episodeCount" value="${Number.isFinite(series.episodeCount) ? escapeHtml(series.episodeCount) : ""}">
         </label>
-        <label class="span-2">
+        ${isNew ? '' : `<label class="span-2">
           <span>Schedule-Link</span>
           <input name="scheduleLink" value="${escapeHtml(series.scheduleLink)}">
-        </label>
+        </label>`}
         <label class="span-2">
           <span>Image URL</span>
           <input name="imageUrl" value="${escapeHtml(series.imageUrl)}" placeholder="https://example.com/poster.jpg">
@@ -1269,7 +1342,7 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
         </div>
       </form>
     </section>
-    ${isNew ? "" : renderSeriesLifecyclePanel(series, settings)}
+    ${isNew ? renderNewSeriesScript() : renderSeriesLifecyclePanel(series, settings)}
     ${
       isNew
         ? ""
@@ -1337,8 +1410,20 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
   app.use(express.static(path.join(rootDir, "public")));
   app.use(requireBasicAuth);
   const discovery = options.discovery || getDiscoveryController(store);
+  const readLiveChartTitle = options.fetchTitle || fetchLiveChartTitle;
   app.get('/livechart', (req, res) => res.redirect('/settings#settings-livechart'));
   app.get('/api/livechart/status', (req, res) => res.json(discovery.status()));
+  app.post('/api/livechart/title', asyncRoute(async (req, res) => {
+    const scheduleLink = cleanString(req.body.scheduleLink);
+    if (!liveChartId(scheduleLink)) return res.status(400).json({ error: 'Enter a valid LiveChart anime link.' });
+    const existing = findDuplicateSeries(store.listSeries(), { scheduleLink });
+    if (existing) return res.status(409).json({ title: existing.title, existingSeriesId: existing.id });
+    try {
+      return res.json({ title: await readLiveChartTitle(scheduleLink) });
+    } catch (error) {
+      return res.status(502).json({ error: error.message });
+    }
+  }));
 
   app.get(
     "/",
@@ -1542,8 +1627,16 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
   app.post(
     "/series",
     asyncRoute(async (req, res) => {
-      const series = await store.upsertSeries(formToSeries(req.body));
-      res.redirect(`/series/${encodeURIComponent(series.id)}?ok=Series created`);
+      const input = formToSeries(req.body);
+      try {
+        store.assertUniqueSeries(input);
+        if (!input.title) input.title = await readLiveChartTitle(input.scheduleLink);
+        const series = await store.upsertSeries(input);
+        res.redirect(`/series/${encodeURIComponent(series.id)}?ok=Series created`);
+      } catch (error) {
+        if (error.code === 'DUPLICATE_SERIES') return res.redirect(`/series/${encodeURIComponent(error.existingSeriesId)}?error=${encodeURIComponent(error.message)}`);
+        res.status(400).send(renderSeriesForm(input, store.getSettings(), { error: error.message }, true, discord.enabled));
+      }
     })
   );
 
@@ -1661,6 +1754,9 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
   app.get("/health", (req, res) => res.json({ ok: true }));
 
   app.use((error, req, res, next) => {
+    if (error.code === 'DUPLICATE_SERIES') {
+      return res.redirect(`/series/${encodeURIComponent(error.existingSeriesId)}?error=${encodeURIComponent(error.message)}`);
+    }
     if (error instanceof multer.MulterError) {
       const tab = req.path.includes("database") ? "backup" : "import";
       const message = error.code === "LIMIT_FILE_SIZE" ? "Upload is too large. Maximum size is 10 MB." : error.message;

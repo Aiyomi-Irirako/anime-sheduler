@@ -1,7 +1,8 @@
 import { DateTime } from 'luxon';
-import { fetchLiveChartHtml, liveChartId } from './livechartHttp.js';
+import { fetchLiveChartHtml } from './livechartHttp.js';
 import { parseSeasonCatalog, hasUpcomingGermanRelease, buildDiscoveredSeries } from './livechartCatalog.js';
 import { normalizeDailyTime } from './utils.js';
+import { findDuplicateSeries } from './seriesIdentity.js';
 
 const SEASONS = ['winter', 'spring', 'summer', 'fall'];
 const controllers = new WeakMap();
@@ -37,10 +38,9 @@ export function shouldRunDiscovery(settings, state, now = DateTime.now()) {
 }
 
 export function hasExistingSeries(series, candidate) {
-  return series.some((item) => liveChartId(item.scheduleLink) === candidate.id ||
-    (candidate.malId && String(item.malId || '') === candidate.malId) ||
-    (!liveChartId(item.scheduleLink) && !item.malId &&
-      String(item.title || '').trim().toLowerCase() === candidate.title.trim().toLowerCase()));
+  return Boolean(findDuplicateSeries(series, {
+    ...candidate, scheduleLink: candidate.id ? `https://www.livechart.me/anime/${candidate.id}/schedules` : candidate.scheduleLink
+  }));
 }
 
 export function createDiscoveryController(store, { fetchHtml = fetchLiveChartHtml, now = () => DateTime.now() } = {}) {
