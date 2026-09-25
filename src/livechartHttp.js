@@ -3,8 +3,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export function liveChartId(value) {
   try {
     const url = new URL(value);
-    if (!['livechart.me', 'www.livechart.me'].includes(url.hostname)) return '';
-    return url.pathname.match(/^\/anime\/(\d+)(?:\/|$)/)?.[1] || '';
+    if (!['http:', 'https:'].includes(url.protocol) || url.port || url.username || url.password ||
+        !['livechart.me', 'www.livechart.me'].includes(url.hostname)) return '';
+    const id = url.pathname.match(/^\/anime\/(\d+)(?:\/|$)/)?.[1]?.replace(/^0+(?=\d)/, '') || '';
+    return id === '0' ? '' : id;
   } catch {
     return '';
   }
