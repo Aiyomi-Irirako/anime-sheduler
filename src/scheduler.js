@@ -113,7 +113,7 @@ function getComparableReleaseAfterSync(series, release, settings, now) {
 }
 
 function releaseRolledForwardAfterSync(series, release, settings, now, live = {}) {
-  if (release.kind !== 'language' && (live.mainUnavailable || live.mainReleaseUnconfirmed || live.mainEpisodeUnknown)) return false;
+  if (release.kind !== 'language' && (live.mainUnavailable || live.mainEpisodeUnknown)) return false;
   const postedEnd = releaseEndEpisode(release);
   if (!Number.isFinite(postedEnd)) return false;
   if (release.kind !== "language" && live.preferredReleaseFinished &&

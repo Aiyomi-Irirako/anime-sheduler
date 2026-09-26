@@ -29,7 +29,6 @@ function parseLiveTimestamp(value) {
 export function prepareLiveLanguageTracks(liveTracks = [], settings = {}) {
   const zone = settings.timeZone || "Europe/Berlin";
   return (Array.isArray(liveTracks) ? liveTracks : []).map((track) => {
-    if (track.requiresConfirmation) return { ...track, ...scheduleDateFields(null, zone) };
     const timestamp = parseLiveTimestamp(track.releaseTimestamp);
     if (timestamp === null) return Object.hasOwn(track, 'schedulePrecision') ? { ...track, ...scheduleDateFields({
       timestamp: Number.MAX_SAFE_INTEGER, partialDate: track.releaseDate
@@ -47,7 +46,7 @@ export function prepareLiveLanguageTracks(liveTracks = [], settings = {}) {
 }
 
 export function prepareLiveMainSchedule(live = {}, settings = {}) {
-  if (live.mainReleaseUnconfirmed || live.mainEpisodeUnknown) return scheduleDateFields(null);
+  if (live.mainEpisodeUnknown) return scheduleDateFields(null);
   const timestamp = parseLiveTimestamp(live.mainReleaseTimestamp);
   if (timestamp === null) return live.mainScheduleKnown ? scheduleDateFields({
     timestamp: Number.MAX_SAFE_INTEGER, partialDate: live.mainReleaseDate
@@ -105,6 +104,7 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
     preferredLanguageCodes: preferredScheduleLanguage ? [preferredScheduleLanguage] : [],
     timeZone: settings.timeZone,
     requirePreferredLanguage: series.liveChartLanguageStrict,
+    pendingLanguageTracks: series.languageTracks || [],
     nowTimestamp: Math.floor(now.toSeconds())
   });
   const overwriteSchedule = Boolean(options.overwriteSchedule);

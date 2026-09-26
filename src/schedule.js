@@ -8,7 +8,7 @@ const WEEKDAY_BY_KEY = new Map(WEEKDAYS.map((day) => [day.key, day]));
 const WEEKDAY_BY_LABEL = new Map(WEEKDAYS.map((day) => [day.label.toLowerCase(), day]));
 const DEFAULT_MISSING_TIME_POST_TIME = "18:00";
 const FINISHED_SERIES_RETENTION_MONTHS = 1;
-const RELEASE_POST_EXPIRY_HOURS = 6;
+export const RELEASE_POST_EXPIRY_HOURS = 6;
 
 export function normalizeReleaseDay(value) {
   const text = cleanString(value).toLowerCase();
