@@ -2,6 +2,7 @@ import { languageLabel, normalizeLanguageCode } from "./languages.js";
 import { normalizeServiceName, normalizeServiceList } from "./services.js";
 import { parseScheduleRows, isUpcomingSchedule } from "./livechartCatalog.js";
 import { fetchLiveChartHtml, liveChartId } from "./livechartHttp.js";
+import { RELEASE_POST_EXPIRY_HOURS } from "./schedule.js";
 import { DateTime } from "luxon";
 import { load } from "cheerio";
 
@@ -107,6 +108,21 @@ function isUpcomingTimestamp(timestamp, nowTimestamp) {
 
 function upcomingItems(items, nowTimestamp) {
   return items.filter((item) => isUpcomingTimestamp(item.timestamp, nowTimestamp));
+}
+
+function dubAlreadyPosted(item, track) {
+  if (!track || !Number.isFinite(item.episode)) return false;
+  const posted = String(track.lastPostedKey || '').match(/:language:[^:]+:(\d+)(?:-(\d+))?:/);
+  if (posted && Number(posted[2] || posted[1]) >= (item.episodeEnd || item.episode)) return true;
+  const postedAt = DateTime.fromISO(track.lastPostedAt || '');
+  return postedAt.isValid && postedAt.toSeconds() >= item.timestamp;
+}
+
+function isRecoverablePendingDub(item, code, tracks, nowTimestamp) {
+  if (item.isReleased || !Number.isFinite(item.episode) || item.timestamp === Number.MAX_SAFE_INTEGER ||
+      item.timestamp > nowTimestamp || item.timestamp < nowTimestamp - RELEASE_POST_EXPIRY_HOURS * 3600) return false;
+  const track = tracks.find((entry) => entry.code === code && entry.enabled && entry.nextEpisode === item.episode);
+  return Boolean(track && !dubAlreadyPosted(item, track));
 }
 
 function preferredLanguageCodes(values = []) {
@@ -216,12 +232,20 @@ export function parseLiveChartEpisodes(html, options = {}) {
     !mainItems.some((item) => item.isSubbed && matchesPreferredLanguage(item, preferredCodes));
   const languageByCode = new Map();
 
-  const dubItems = options.requirePreferredLanguage
+  const upcomingDubItems = options.requirePreferredLanguage
     ? rows.filter((row) => row.isDub && isUpcomingSchedule(row, options, DateTime.fromSeconds(nowTimestamp)))
     : upcomingItems(parsed.filter((entry) => entry.isDub), nowTimestamp);
+  const pendingTracks = options.pendingLanguageTracks || [];
+  // A sync may repair a cleared date after the countdown passed. Recover only an
+  // already tracked, unposted episode within the scheduler's normal posting window.
+  const recentDubItems = parsed.filter((row) => row.isDub &&
+    row.audioCodes.some((code) => isRecoverablePendingDub(row, code, pendingTracks, nowTimestamp)));
+  const dubItems = [...new Set([...upcomingDubItems, ...recentDubItems])];
   for (const item of dubItems) {
     for (const code of item.audioCodes) {
       if (code === "ja") continue;
+      if (dubAlreadyPosted(item, pendingTracks.find((track) => track.code === code))) continue;
+      if (!upcomingDubItems.includes(item) && !isRecoverablePendingDub(item, code, pendingTracks, nowTimestamp)) continue;
       const existing = languageByCode.get(code);
       if (existing && existing.timestamp <= item.timestamp) continue;
       languageByCode.set(code, {
@@ -230,7 +254,7 @@ export function parseLiveChartEpisodes(html, options = {}) {
         enabled: false,
         available: true,
         nextEpisode: item.episode,
-        episodeBatchSize: episodeBatchSize(upcomingItems(parsed.filter((entry) => entry.isDub), nowTimestamp), item, (entry) =>
+        episodeBatchSize: episodeBatchSize(dubItems, item, (entry) =>
           entry.audioCodes.includes(code)
         ),
         releaseTimestamp: Number.isFinite(item.episode) ? item.timestamp : Number.MAX_SAFE_INTEGER,

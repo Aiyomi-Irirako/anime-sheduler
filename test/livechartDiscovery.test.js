@@ -198,18 +198,19 @@ test('individual parse failures do not prevent other German imports and do not c
   assert.match(store.getDiscovery().error, /Example 101/);
 });
 
-test('unconfirmed and unknown dates keep syncing without generating posts; confirmed German schedules become usable', async (t) => {
+test('German dates remain usable with confirmation warnings; unknown episodes still cannot post', async (t) => {
   const store = await setup(t, { preferredScheduleLanguage: 'en', enabledLanguageCodes: ['en'] });
   const series = await store.upsertSeries({ ...buildDiscoveredSeries(candidate, schedule({ confirm: true }), detail, settings, clock), liveChartImportLanguage: 'de' });
   assert.equal(series.enabled, true);
-  assert.equal(getNextRelease(series, settings, clock), null);
+  assert.equal(getNextRelease(series, settings, clock).missingTime, true);
   let currentHtml = schedule({ confirm: true });
   const fetchEpisodes = async (_, options) => {
     assert.deepEqual(options.preferredLanguageCodes, ['de']);
     return parseLiveChartEpisodes(currentHtml, options);
   };
   await syncOneSeriesFromLiveChart(store, series, { overwriteSchedule: true, now: clock, fetchEpisodes });
-  assert.equal(getNextRelease(store.getSeries(series.id), settings, clock), null);
+  assert.equal(store.getSeries(series.id).nextDate, '2026-10-04');
+  assert.equal(getNextRelease(store.getSeries(series.id), settings, clock).missingTime, true);
   currentHtml = schedule();
   await syncOneSeriesFromLiveChart(store, store.getSeries(series.id), { overwriteSchedule: true, now: clock, fetchEpisodes });
   assert.equal(store.getSeries(series.id).nextDate, '2026-10-04');
@@ -223,15 +224,15 @@ test('unconfirmed and unknown dates keep syncing without generating posts; confi
   assert.equal(getNextRelease(store.getSeries(series.id), settings, clock), null);
 });
 
-test('German dub-only unknown and unconfirmed releases cannot post before dates are usable', () => {
+test('German dub confirmation warnings preserve date-only schedules; unknown episodes clear stale dates', () => {
   const html = schedule({ subtitle: 'en', audio: 'de', title: 'Streaming: Dubbed', confirm: true });
   const series = buildDiscoveredSeries(candidate, html, detail, settings, clock);
   assert.equal(series.languageTracks[0].enabled, true);
-  assert.equal(getNextLanguageRelease(series, series.languageTracks[0], settings, clock), null);
+  assert.equal(getNextLanguageRelease(series, series.languageTracks[0], settings, clock).missingTime, true);
   const live = parseLiveChartEpisodes(html, { nowTimestamp: clock.toSeconds() });
   const incoming = prepareLiveLanguageTracks(live.languageTracks, settings);
   const [track] = mergeLanguageTracks([{ code: 'de', enabled: true, nextEpisode: 1, nextDate: '2026-10-04', releaseTime: '17:00' }], incoming, ['de']);
-  assert.equal(track.nextDate, '');
+  assert.equal(track.nextDate, '2026-10-04');
   assert.equal(track.releaseTime, '');
   const unknown = parseLiveChartEpisodes(schedule({ subtitle: 'en', audio: 'de', title: 'Streaming: Dubbed', label: '' }), {
     requirePreferredLanguage: true, preferredLanguageCodes: ['de'], nowTimestamp: clock.toSeconds()
@@ -240,6 +241,34 @@ test('German dub-only unknown and unconfirmed releases cannot post before dates 
     prepareLiveLanguageTracks(unknown.languageTracks, settings), ['de']);
   assert.equal(updated.nextDate, '');
   assert.equal(updated.releaseTime, '');
+});
+
+test('confirmation warnings keep exact subtitle and dub times without inventing dates for TBA schedules', () => {
+  const stamp = DateTime.fromISO('2026-10-04T17:00:00', { zone: settings.timeZone }).toSeconds();
+  for (const dub of [false, true]) {
+    const options = { confirm: true, ...(dub ? { subtitle: 'en', audio: 'de', title: 'Simulcast: Dubbed' } : {}) };
+    const html = schedule({ ...options, stamp });
+    const series = buildDiscoveredSeries(candidate, html, detail, settings, clock);
+    const live = parseLiveChartEpisodes(html, { preferredLanguageCodes: ['de'], requirePreferredLanguage: true, nowTimestamp: clock.toSeconds() });
+    const imported = dub ? series.languageTracks[0] : series;
+    const synced = dub ? prepareLiveLanguageTracks(live.languageTracks, settings)[0] : prepareLiveMainSchedule(live, settings);
+    for (const entry of [imported, synced]) {
+      assert.equal(entry.nextDate, '2026-10-04');
+      assert.equal(entry.releaseTime, '17:00');
+    }
+    for (const missing of [{ precision: 1 }, { precision: 2 }, { date: '' }, { label: '' }, { label: '', stamp }]) {
+      const missingHtml = schedule({ ...options, ...missing });
+      const pending = buildDiscoveredSeries(candidate, missingHtml, detail, settings, clock);
+      const parsed = parseLiveChartEpisodes(missingHtml, { preferredLanguageCodes: ['de'], requirePreferredLanguage: true, nowTimestamp: clock.toSeconds() });
+      const importedPending = dub ? pending.languageTracks[0] : pending;
+      const syncedPending = dub ? prepareLiveLanguageTracks(parsed.languageTracks, settings)[0] : prepareLiveMainSchedule(parsed, settings);
+      for (const entry of [importedPending, syncedPending]) {
+        assert.equal(entry.nextDate, '');
+        assert.equal(entry.releaseTime, '');
+        assert.equal(entry.releaseDay, '');
+      }
+    }
+  }
 });
 
 test('season rollover, settings and state remain bounded without retaining discarded candidates', async (t) => {

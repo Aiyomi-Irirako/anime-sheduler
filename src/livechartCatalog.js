@@ -120,7 +120,7 @@ export function buildDiscoveredSeries(candidate, scheduleHtml, detailHtml, setti
     return row ? {
       code, label: languageLabel(code), enabled: true, available: true,
       nextEpisode: row.episode, episodeBatchSize: row.episode ? row.episodeEnd - row.episode + 1 : 1,
-      ...scheduleDateFields(!row.requiresConfirmation && row.episode ? row : null, zone), weekly: !row.batch, source: 'livechart'
+      ...scheduleDateFields(row.episode ? row : null, zone), weekly: !row.batch, source: 'livechart'
     } : null;
   }).filter(Boolean);
   const services = unique([...sub, ...rows.filter((row) => row.isDub && row.audioCodes.some((code) => enabledCodes.includes(code)))]
@@ -129,7 +129,7 @@ export function buildDiscoveredSeries(candidate, scheduleHtml, detailHtml, setti
   const premiereLabel = $('*').filter((_, e) => $(e).children().length === 0 && text($(e)) === 'Premiere').first();
   const premiereText = text(premiereLabel.parent()).replace(/^Premiere\s*/, '');
   const premiere = DateTime.fromFormat(premiereText, 'MMM d, yyyy', { locale: 'en' });
-  const dateFields = scheduleDateFields(main && !main.requiresConfirmation && main.episode ? main : null, zone);
+  const dateFields = scheduleDateFields(main?.episode ? main : null, zone);
   return {
     title: candidate.title, service: normalizeServiceList(services.join(',')), scheduleLink: candidate.scheduleLink,
     malId: candidate.malId, imageUrl: candidate.imageUrl, episodeCount: candidate.episodeCount,
