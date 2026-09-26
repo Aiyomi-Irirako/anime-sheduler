@@ -67,6 +67,10 @@ All LiveChart HTTP requests share a sequential queue with at least 6.5 seconds b
 
 The global LiveChart sync intentionally waits between requests to reduce the chance of rate limits.
 
+Manual full syncs and single-series syncs run in the background. The start request returns immediately instead of waiting for LiveChart, avoiding long-running requests through a reverse proxy. Settings, Finished and the series editor display progress and the final result. While a sync runs, the page reads `/api/livechart/sync-status` every few seconds; these requests do not contact LiveChart. Updated data reloads when the job finishes, unless the form has unsaved edits.
+
+Manual and daily syncs share one running-job guard, so additional clicks or a daily timer cannot start an overlapping sync. Closing the browser does not stop the job. Progress is kept only in memory; restarting the app interrupts the current job. The latest completed full-sync timestamp and summary remain in the existing settings, with no additional job-history database. The once-daily schedule and LiveChart request throttling are unchanged.
+
 ## Changelog
 
 Open `Changelog` in the top navigation to review series changes from the last 7 days. The list includes manual edits, CSV imports, LiveChart sync updates, scheduler advances after Discord posts, and deleted entries. Older entries are removed automatically.

@@ -10,6 +10,7 @@ import { scheduleDateFields } from "./livechartCatalog.js";
 import { normalizeDailyTime } from "./utils.js";
 
 const WEEKDAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const controllers = new WeakMap();
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -181,8 +182,14 @@ export async function syncAllLiveChart(store, options = {}) {
     errors: []
   };
   const failedIds = new Set();
+  const report = (title = '') => options.onProgress?.({
+    checked: result.checked, total: seriesList.length, updated: result.updated,
+    deleted: result.deleted, failed: result.failed, currentTitle: title
+  });
+  report();
 
   for (const series of seriesList) {
+    report(series.title);
     result.checked += 1;
     try {
       const current = store.getSeries(series.id);
@@ -201,7 +208,8 @@ export async function syncAllLiveChart(store, options = {}) {
       const synced = await syncOneSeriesFromLiveChart(store, current, {
         overwriteSchedule,
         source: options.source || "livechart-sync",
-        now: options.now
+        now: options.now,
+        fetchEpisodes: options.fetchEpisodes
       });
 
       if (synced.changed) {
@@ -239,6 +247,8 @@ export async function syncAllLiveChart(store, options = {}) {
         result.rateLimited = true;
         break;
       }
+    } finally {
+      report();
     }
 
     if (delayMs > 0) await sleep(delayMs);
@@ -257,6 +267,7 @@ export async function syncAllLiveChart(store, options = {}) {
         episodeCount: series.episodeCount,
         episodeCountUpdatedAt: series.episodeCountUpdatedAt
       });
+      report();
     }
   }
 
@@ -265,6 +276,60 @@ export async function syncAllLiveChart(store, options = {}) {
   }`;
   await store.markLiveChartSync({ summary });
   return { ...result, summary };
+}
+
+export function createLiveChartSyncController(store, {
+  syncAll = syncAllLiveChart, syncOne = syncOneSeriesFromLiveChart, now = () => DateTime.now()
+} = {}) {
+  let job = { running: false, seriesId: '', progress: '', error: '', checked: 0, total: 0,
+    updated: 0, deleted: 0, failed: 0, startedAt: '', finishedAt: '' };
+  let task = null;
+  return {
+    start({ seriesId = '', patch } = {}) {
+      if (job.running) throw new Error('A LiveChart sync is already running.');
+      const series = seriesId ? store.getSeries(seriesId) : null;
+      if (seriesId && !series) throw new Error('Series not found.');
+      job = { running: true, seriesId, progress: series ? `Syncing ${series.title}` : 'Starting LiveChart sync',
+        error: '', checked: 0, total: series ? 1 : 0, updated: 0, deleted: 0, failed: 0,
+        startedAt: now().toISO(), finishedAt: '' };
+      // Reserve the shared job before awaiting saves or HTTP, then let the web request finish.
+      task = Promise.resolve().then(async () => {
+        if (seriesId) {
+          const current = store.getSeries(seriesId);
+          if (!current) throw new Error('Series not found.');
+          const saved = patch ? await store.upsertSeries({ ...current, ...patch }) : current;
+          const result = await syncOne(store, saved, { overwriteSchedule: true, source: 'livechart-sync', now: now() });
+          job.checked = 1;
+          job.updated = result.changed ? 1 : 0;
+          job.progress = `${saved.title}: ${result.changed ? 'LiveChart updated' : 'No changes found'}`;
+          return result;
+        }
+        const result = await syncAll(store, { onProgress: (progress) => {
+          Object.assign(job, progress);
+          job.progress = `Syncing ${progress.checked}/${progress.total}${progress.currentTitle ? `: ${progress.currentTitle}` : ''}`;
+        } });
+        job.progress = `LiveChart sync: ${result.summary}`;
+        job.error = (result.errors || []).slice(0, 3).map((error) => `${error.title}: ${error.message}`).join(' | ');
+        return result;
+      }).catch((error) => {
+        job.error = error.message;
+        job.failed += 1;
+        job.progress = 'LiveChart sync failed';
+        return null;
+      }).finally(() => {
+        job.running = false;
+        job.finishedAt = now().toISO();
+      });
+      return task;
+    },
+    wait: () => task,
+    status: () => ({ ...job })
+  };
+}
+
+export function getLiveChartSyncController(store) {
+  if (!controllers.has(store)) controllers.set(store, createLiveChartSyncController(store));
+  return controllers.get(store);
 }
 
 export function shouldRunDailyLiveChartSync(settings, base = DateTime.now()) {
@@ -282,21 +347,17 @@ export function shouldRunDailyLiveChartSync(settings, base = DateTime.now()) {
   return last.toISODate() !== now.toISODate();
 }
 
-export function startLiveChartDailySync(store) {
-  let running = false;
+export function startLiveChartDailySync(store, { controller = getLiveChartSyncController(store), now = () => DateTime.now() } = {}) {
 
   const runIfDue = async () => {
-    if (running) return;
-    if (!shouldRunDailyLiveChartSync(store.getSettings())) return;
+    if (controller.status().running) return;
+    if (!shouldRunDailyLiveChartSync(store.getSettings(), now())) return;
 
-    running = true;
     try {
-      const result = await syncAllLiveChart(store);
-      console.log(`LiveChart daily sync: ${result.summary}`);
+      const result = await controller.start();
+      console.log(`LiveChart daily sync: ${result?.summary || controller.status().error}`);
     } catch (error) {
       console.error(`LiveChart daily sync failed: ${error.stack || error.message}`);
-    } finally {
-      running = false;
     }
   };
 

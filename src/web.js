@@ -10,12 +10,11 @@ import {
   getNextAnnouncementRelease,
   listUpcomingTodayTomorrow,
   formatReleaseDate,
-  formatEpisodeRange,
   getReleaseDayLabel,
   formatEpisodeEntries,
   isSeriesComplete
 } from "./schedule.js";
-import { syncAllLiveChart, syncOneSeriesFromLiveChart } from "./livechartSync.js";
+import { getLiveChartSyncController } from "./livechartSync.js";
 import { cleanString, escapeHtml, parseInteger, toFormBoolean } from "./utils.js";
 import {
   LANGUAGE_OPTIONS,
@@ -161,6 +160,16 @@ function formatSyncStatus(settings) {
   const date = DateTime.fromISO(settings.lastLiveChartSyncAt, { zone: settings.timeZone || "Europe/Berlin" });
   if (!date.isValid) return "Not synced yet";
   return date.setLocale("en").toFormat("dd LLL yyyy HH:mm");
+}
+
+function renderLiveChartSyncStatus(job = {}) {
+  if (!job.startedAt) return '';
+  return `<div class="livechart-sync-status" data-livechart-sync-status data-running="${Boolean(job.running)}">
+    <strong role="status" data-sync-progress>${escapeHtml(job.progress)}</strong>
+    <progress data-sync-meter aria-label="LiveChart sync progress" max="${Math.max(1, job.total || 0)}" value="${job.checked || 0}" ${job.running ? '' : 'hidden'}></progress>
+    <span class="sync-error" role="alert" data-sync-error ${job.error ? '' : 'hidden'}>${escapeHtml(job.error || '')}</span>
+    <a href="" data-sync-reload hidden>Reload updated data</a>
+  </div><script src="/livechart-sync.js" defer></script>`;
 }
 
 function renderHero(data, discordEnabled) {
@@ -503,8 +512,9 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
         <input value="${escapeHtml(formatSyncStatus(settings))}" readonly>
       </label>
       <div class="form-actions span-2">
-        <button type="submit" class="button secondary" name="settingsAction" value="sync-livechart">Sync LiveChart now</button>
+        <button type="submit" class="button secondary" name="settingsAction" value="sync-livechart" data-livechart-sync-button ${dataStats.syncStatus?.running ? 'disabled' : ''}>Sync LiveChart now</button>
       </div>
+      <div class="span-2">${renderLiveChartSyncStatus(dataStats.syncStatus)}</div>
       <label class="check span-2 boxed-check">
         <input type="checkbox" name="liveChartDiscoveryEnabled" ${toFormBoolean(settings.liveChartDiscoveryEnabled)}>
         <span>Automatically add new series with German subtitles or German audio</span>
@@ -859,7 +869,7 @@ function formatLifecycleDate(value, settings, fallback = "Not set") {
   return date.setLocale("en").toFormat("dd LLL yyyy HH:mm");
 }
 
-function renderFinishedPage(data, query) {
+function renderFinishedPage(data, query, syncStatus = {}) {
   const now = DateTime.now().setZone(data.settings.timeZone || "Europe/Berlin");
   const finished = data.series
     .filter((series) => isSeriesComplete(series))
@@ -910,9 +920,10 @@ function renderFinishedPage(data, query) {
         </div>
         <form method="post" action="/sync-livechart-all">
           <input type="hidden" name="returnTo" value="/finished">
-          <button type="submit" class="button secondary">Sync LiveChart now</button>
+          <button type="submit" class="button secondary" data-livechart-sync-button ${syncStatus.running ? 'disabled' : ''}>Sync LiveChart now</button>
         </form>
       </div>
+      ${renderLiveChartSyncStatus(syncStatus)}
       <div class="table-wrap">
         <table>
           <thead>
@@ -1063,7 +1074,7 @@ function renderChangelogPage(data, query) {
   );
 }
 
-function renderSettingsPage(data, discordEnabled, query, channelGroups = [], roleGroups = [], discoveryStatus = {}) {
+function renderSettingsPage(data, discordEnabled, query, channelGroups = [], roleGroups = [], discoveryStatus = {}, syncStatus = {}) {
   return renderPage(
     "Settings",
     `${messageFromQuery(query)}
@@ -1081,7 +1092,8 @@ function renderSettingsPage(data, discordEnabled, query, channelGroups = [], rol
         series: data.series.length,
         posts: data.posts.length,
         discovery: data.liveChartDiscovery,
-        discoveryStatus
+        discoveryStatus,
+        syncStatus
       })}
     </div>`
   );
@@ -1236,7 +1248,7 @@ function renderNewSeriesScript() {
   </script>`;
 }
 
-function renderSeriesForm(series, settings, query, isNew = false, discordEnabled = true) {
+function renderSeriesForm(series, settings, query, isNew = false, discordEnabled = true, syncStatus = {}) {
   const release = getNextRelease(series, settings);
   const action = isNew ? "/series" : `/series/${encodeURIComponent(series.id)}`;
   const title = isNew ? "New Series" : series.title;
@@ -1252,6 +1264,7 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
         </div>
         <a class="button secondary" href="/">Back</a>
       </div>
+      ${isNew ? '' : renderLiveChartSyncStatus(syncStatus)}
       <form id="series-form" class="grid-form edit-form" method="post" action="${action}">
         ${isNew ? `<label class="span-2">
           <span>LiveChart link</span>
@@ -1328,7 +1341,7 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
           ${
             isNew
               ? ""
-              : '<button type="submit" formaction="' + action + '/sync-livechart">LiveChart sync</button>'
+              : '<button type="submit" data-livechart-sync-button ' + (syncStatus.running ? 'disabled ' : '') + 'formaction="' + action + '/sync-livechart">LiveChart sync</button>'
           }
           ${
             isNew
@@ -1410,9 +1423,11 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
   app.use(express.static(path.join(rootDir, "public")));
   app.use(requireBasicAuth);
   const discovery = options.discovery || getDiscoveryController(store);
+  const liveChartSync = options.liveChartSync || getLiveChartSyncController(store);
   const readLiveChartTitle = options.fetchTitle || fetchLiveChartTitle;
   app.get('/livechart', (req, res) => res.redirect('/settings#settings-livechart'));
   app.get('/api/livechart/status', (req, res) => res.json(discovery.status()));
+  app.get('/api/livechart/sync-status', (req, res) => res.set('Cache-Control', 'no-store').json(liveChartSync.status()));
   app.post('/api/livechart/title', asyncRoute(async (req, res) => {
     const scheduleLink = cleanString(req.body.scheduleLink);
     if (!liveChartId(scheduleLink)) return res.status(400).json({ error: 'Enter a valid LiveChart anime link.' });
@@ -1435,7 +1450,7 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
   app.get(
     "/finished",
     asyncRoute(async (req, res) => {
-      res.send(renderFinishedPage(store.snapshot(), req.query));
+      res.send(renderFinishedPage(store.snapshot(), req.query, liveChartSync.status()));
     })
   );
 
@@ -1459,7 +1474,7 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
           return [];
         })
       ]);
-      res.send(renderSettingsPage(store.snapshot(), discord.enabled, req.query, channelGroups, roleGroups, discovery.status()));
+      res.send(renderSettingsPage(store.snapshot(), discord.enabled, req.query, channelGroups, roleGroups, discovery.status(), liveChartSync.status()));
     })
   );
 
@@ -1480,8 +1495,8 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
       }
       if (cleanString(req.body.settingsAction) === "sync-livechart") {
         try {
-          const result = await syncAllLiveChart(store);
-          return redirectToSettings(res, "livechart", "ok", `Settings saved. LiveChart sync: ${result.summary}`);
+          liveChartSync.start();
+          return res.redirect('/settings#settings-livechart');
         } catch (error) {
           return redirectToSettings(res, "livechart", "error", error.message);
         }
@@ -1581,8 +1596,8 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
     asyncRoute(async (req, res) => {
       const returnTo = cleanString(req.body.returnTo) === "/finished" ? "/finished" : "/settings";
       try {
-        const result = await syncAllLiveChart(store);
-        res.redirect(`${returnTo}?ok=${encodeURIComponent(`LiveChart sync: ${result.summary}`)}`);
+        liveChartSync.start();
+        res.redirect(returnTo === '/settings' ? '/settings#settings-livechart' : returnTo);
       } catch (error) {
         res.redirect(`${returnTo}?error=${encodeURIComponent(error.message)}`);
       }
@@ -1645,7 +1660,7 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
     asyncRoute(async (req, res) => {
       const series = store.getSeries(req.params.id);
       if (!series) return res.status(404).send(renderPage("Not Found", "<p>Series not found.</p>"));
-      res.send(renderSeriesForm(series, store.getSettings(), req.query, false, discord.enabled));
+      res.send(renderSeriesForm(series, store.getSettings(), req.query, false, discord.enabled, liveChartSync.status()));
     })
   );
 
@@ -1686,32 +1701,8 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
 
       const patch = { ...existing, ...formToSeries(req.body, existing.id) };
       try {
-        const saved = await store.upsertSeries(patch);
-        const synced = await syncOneSeriesFromLiveChart(store, saved, {
-          overwriteSchedule: true,
-          source: "livechart-sync"
-        });
-        const updated = synced.updated || store.getSeries(saved.id) || saved;
-        const live = synced.live;
-        const parts = [];
-        if (Number.isFinite(live.nextEpisode)) {
-          parts.push(formatEpisodeRange({ episode: live.nextEpisode, episodeBatchSize: live.episodeBatchSize, episodeEnd: live.nextEpisode + (live.episodeBatchSize || 1) - 1 }));
-        }
-        for (const track of live.languageTracks || []) {
-          if (Number.isFinite(track.nextEpisode)) {
-            const range = formatEpisodeRange({
-              episode: track.nextEpisode,
-              episodeBatchSize: track.episodeBatchSize,
-              episodeEnd: track.nextEpisode + (track.episodeBatchSize || 1) - 1
-            });
-            parts.push(`${track.label} ${range}`);
-          }
-        }
-        res.redirect(
-          `/series/${encodeURIComponent(updated.id)}?ok=${encodeURIComponent(
-            `LiveChart updated: ${parts.join(" / ") || "no episodes found"}`
-          )}`
-        );
+        liveChartSync.start({ seriesId: existing.id, patch });
+        res.redirect(`/series/${encodeURIComponent(existing.id)}`);
       } catch (error) {
         res.redirect(`/series/${encodeURIComponent(existing.id)}?error=${encodeURIComponent(error.message)}`);
       }
