@@ -125,6 +125,15 @@ function releaseRolledForwardAfterSync(series, release, settings, now, live = {}
     return nextRelease.episode > postedEnd && !shouldPostRelease(nextRelease, settings, now);
   }
 
+  // LiveChart can advance the episode before publishing its next date. Preserve
+  // the already due release without inventing a schedule for the new episode.
+  if (!nextRelease && series.enabled) {
+    const nextEpisode = release.kind === "language"
+      ? enabledLanguageTracks(series).find((track) => track.code === release.languageCode)?.nextEpisode
+      : series.status !== "finished" ? series.nextEpisode : null;
+    if (Number.isFinite(nextEpisode)) return nextEpisode > postedEnd;
+  }
+
   if (release.kind === "language") {
     const track = (series.languageTracks || []).find((item) => item.code === release.languageCode);
     return !Number.isFinite(track?.nextEpisode) && Number.isFinite(series.episodeCount) && series.episodeCount >= postedEnd;
