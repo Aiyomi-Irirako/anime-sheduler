@@ -89,6 +89,8 @@ For a dedicated test instance, set `DISCORD_AUTO_POSTS=false` in its `.env` befo
 
 Before an automatic post is sent for a LiveChart-linked series, the scheduler refreshes that single series from LiveChart and recalculates whether it is still due. If LiveChart moved the episode, the stale post is skipped and the stored entry is updated. If LiveChart replaces the final episode with `Released`, a known, unposted final episode remains eligible within the six-hour posting window. This also applies when a daily sync runs before the scheduler.
 
+If the pre-post refresh advances to a higher episode whose release date is still unknown, the already due episode is still announced within the normal posting window. The higher episode stays stored without inventing its next date. This applies separately to the main release and enabled language versions; it does not recover older posts that were already missed.
+
 If `REMINDER_MINUTES=0`, the bot posts at release time.
 
 If `REMINDER_MINUTES=60`, the bot posts one hour before release time.
