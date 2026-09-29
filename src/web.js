@@ -29,6 +29,7 @@ import { normalizePreferredService, pickPreferredService, serviceStyle, splitSer
 import { getDiscoveryController } from "./livechartDiscovery.js";
 import { automaticPostsEnabled, automaticPostsLocked } from "./discordPosting.js";
 import { fetchLiveChartTitle } from "./livechart.js";
+import { fetchLiveChartSeriesDraft } from "./livechartImport.js";
 import { liveChartId } from "./livechartHttp.js";
 import { findDuplicateSeries } from "./seriesIdentity.js";
 
@@ -1135,6 +1136,7 @@ function renderLanguageTrackSettings(series) {
       return `<div class="language-track-row">
         <input type="hidden" name="languageCodes" value="${escapeHtml(normalized)}">
         <input type="hidden" name="languageAvailable_${escapeHtml(key)}" value="${track.available ? "1" : "0"}">
+        <input type="hidden" name="languageWeekly_${escapeHtml(key)}" value="${track.weekly === false ? "0" : "1"}">
         <label class="check">
           <input type="checkbox" name="languageEnabled_${escapeHtml(key)}" ${toFormBoolean(track.enabled)}>
           <span>${escapeHtml(track.label)} dub</span>
@@ -1183,71 +1185,6 @@ function renderSeriesLifecyclePanel(series, settings) {
   </section>`;
 }
 
-function renderNewSeriesScript() {
-  return `<script>
-    (() => {
-      const form = document.getElementById('series-form');
-      const link = form.elements.scheduleLink;
-      const title = form.elements.title;
-      const status = document.getElementById('series-title-status');
-      let timer, sequence = 0, automaticTitle = '', requestedId = '';
-      const animeId = () => {
-        try {
-          const url = new URL(link.value.trim());
-          if (!['http:', 'https:'].includes(url.protocol) || url.port || url.username || url.password ||
-              !['livechart.me', 'www.livechart.me'].includes(url.hostname)) return '';
-          return url.pathname.match(/^\\/anime\\/(\\d+)(?:\\/|$)/)?.[1] || '';
-        } catch { return ''; }
-      };
-      const lookup = async () => {
-        const id = animeId();
-        if (!id || id === requestedId || (title.value.trim() && title.value !== automaticTitle)) return;
-        requestedId = id;
-        const current = ++sequence;
-        const originalLink = link.value;
-        status.textContent = 'Loading title...';
-        try {
-          const response = await fetch('/api/livechart/title', { method: 'POST',
-            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scheduleLink: originalLink }) });
-          const data = await response.json();
-          if (current !== sequence || link.value !== originalLink) return;
-          if (data.existingSeriesId) {
-            status.textContent = 'Series already exists: ';
-            const existing = document.createElement('a');
-            existing.href = '/series/' + encodeURIComponent(data.existingSeriesId);
-            existing.textContent = data.title;
-            status.append(existing);
-            return;
-          }
-          if (!response.ok) throw new Error(data.error || 'Could not load the title.');
-          if (!title.value.trim() || title.value === automaticTitle) {
-            title.value = data.title;
-            automaticTitle = data.title;
-          }
-          status.textContent = '';
-        } catch (error) {
-          if (current !== sequence) return;
-          requestedId = '';
-          status.textContent = error.message;
-        }
-      };
-      link.addEventListener('input', () => {
-        clearTimeout(timer);
-        sequence += 1;
-        requestedId = '';
-        if (automaticTitle && title.value === automaticTitle) title.value = '';
-        automaticTitle = '';
-        title.required = !animeId();
-        status.textContent = '';
-        timer = setTimeout(lookup, 700);
-      });
-      link.addEventListener('change', () => { clearTimeout(timer); lookup(); });
-      title.required = !animeId();
-      lookup();
-    })();
-  </script>`;
-}
-
 function renderSeriesForm(series, settings, query, isNew = false, discordEnabled = true, syncStatus = {}) {
   const release = getNextRelease(series, settings);
   const action = isNew ? "/series" : `/series/${encodeURIComponent(series.id)}`;
@@ -1265,11 +1202,24 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
         <a class="button secondary" href="/">Back</a>
       </div>
       ${isNew ? '' : renderLiveChartSyncStatus(syncStatus)}
-      <form id="series-form" class="grid-form edit-form" method="post" action="${action}">
-        ${isNew ? `<label class="span-2">
+      <form id="series-form" class="grid-form edit-form" method="post" action="${action}" data-series-id="${isNew ? '' : escapeHtml(series.id)}">
+        <input type="hidden" name="liveChartLanguageStrict" value="${series.liveChartLanguageStrict ? '1' : '0'}">
+        <input type="hidden" name="liveChartImportLanguage" value="${escapeHtml(series.liveChartImportLanguage || '')}">
+        <input type="hidden" name="malId" value="${escapeHtml(series.malId || '')}">
+        <input type="hidden" name="rawRelease" value="${escapeHtml(series.rawRelease || '')}">
+        <label class="span-2">
           <span>LiveChart link</span>
           <input name="scheduleLink" value="${escapeHtml(series.scheduleLink)}" placeholder="https://www.livechart.me/anime/123/schedules">
-        </label>` : ''}
+        </label>
+        <div class="span-2">
+          <button type="button" class="button secondary" data-livechart-import>Load from LiveChart</button>
+          <p data-livechart-import-status role="status" aria-live="polite"></p>
+        </div>
+        <label class="span-2">
+          <span>Schedule source</span>
+          <select name="scheduleMode">${option('livechart', 'Follow LiveChart', series.scheduleMode === 'manual' ? 'manual' : 'livechart')}${option('manual', 'Manual schedule', series.scheduleMode === 'manual' ? 'manual' : 'livechart')}</select>
+          <span>Manual schedule protects dates, services and language versions from LiveChart sync. Loading a draft only changes this form; save when ready.</span>
+        </label>
         <label class="span-2">
           <span>Title</span>
           <input name="title" ${isNew ? '' : 'required'} value="${escapeHtml(series.title)}">
@@ -1319,10 +1269,11 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
           <span>Total episodes</span>
           <input type="number" min="0" name="episodeCount" value="${Number.isFinite(series.episodeCount) ? escapeHtml(series.episodeCount) : ""}">
         </label>
-        ${isNew ? '' : `<label class="span-2">
-          <span>Schedule-Link</span>
-          <input name="scheduleLink" value="${escapeHtml(series.scheduleLink)}">
-        </label>`}
+        <div class="inline-options span-2">
+          <button type="button" class="button secondary" data-release-preset="weekly">Weekly release</button>
+          <button type="button" class="button secondary" data-release-preset="complete">Complete series</button>
+          <span data-release-preset-status role="status">Presets apply to the main release. Complete series requires a total episode count.</span>
+        </div>
         <label class="span-2">
           <span>Image URL</span>
           <input name="imageUrl" value="${escapeHtml(series.imageUrl)}" placeholder="https://example.com/poster.jpg">
@@ -1355,7 +1306,8 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
         </div>
       </form>
     </section>
-    ${isNew ? renderNewSeriesScript() : renderSeriesLifecyclePanel(series, settings)}
+    <script src="/livechart-import.js" defer></script>
+    ${isNew ? '' : renderSeriesLifecyclePanel(series, settings)}
     ${
       isNew
         ? ""
@@ -1385,7 +1337,8 @@ function formToSeries(body, id = "") {
         episodeBatchSize: parseInteger(body[`languageBatchSize_${key}`]),
         releaseDay: cleanString(body[`languageReleaseDay_${key}`]),
         releaseTime: cleanString(body[`languageReleaseTime_${key}`]),
-        nextDate: cleanString(body[`languageNextDate_${key}`])
+        nextDate: cleanString(body[`languageNextDate_${key}`]),
+        ...(Object.hasOwn(body, `languageWeekly_${key}`) ? { weekly: body[`languageWeekly_${key}`] === "1" } : {})
       };
     })
     .filter((track) => track.code);
@@ -1407,6 +1360,11 @@ function formToSeries(body, id = "") {
     dubNextEpisode: germanTrack?.nextEpisode ?? null,
     episodeCount: parseInteger(body.episodeCount),
     scheduleLink: cleanString(body.scheduleLink),
+    ...(Object.hasOwn(body, "scheduleMode") ? { scheduleMode: body.scheduleMode === "manual" ? "manual" : "livechart" } : {}),
+    ...(Object.hasOwn(body, "liveChartLanguageStrict") ? { liveChartLanguageStrict: body.liveChartLanguageStrict === "1" } : {}),
+    ...(Object.hasOwn(body, "liveChartImportLanguage") ? { liveChartImportLanguage: normalizePreferredScheduleLanguage(body.liveChartImportLanguage) } : {}),
+    ...(Object.hasOwn(body, "malId") ? { malId: cleanString(body.malId) } : {}),
+    ...(Object.hasOwn(body, "rawRelease") ? { rawRelease: cleanString(body.rawRelease) } : {}),
     imageUrl: cleanString(body.imageUrl),
     note: cleanString(body.note),
     status: cleanString(body.status) || "unknown",
@@ -1421,10 +1379,29 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
   app.use(express.urlencoded({ extended: false, limit: "5mb" }));
   app.use(express.json({ limit: "2mb" }));
   app.use(express.static(path.join(rootDir, "public")));
+  app.use('/api/livechart/series-preview', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   app.use(requireBasicAuth);
   const discovery = options.discovery || getDiscoveryController(store);
   const liveChartSync = options.liveChartSync || getLiveChartSyncController(store);
   const readLiveChartTitle = options.fetchTitle || fetchLiveChartTitle;
+  const readSeriesDraft = options.fetchSeriesDraft || fetchLiveChartSeriesDraft;
+  app.post('/api/livechart/series-preview', asyncRoute(async (req, res) => {
+    const scheduleLink = typeof req.body.scheduleLink === 'string' ? req.body.scheduleLink.trim() : '';
+    if (!liveChartId(scheduleLink)) return res.status(400).json({ error: 'Enter a valid LiveChart anime link.' });
+    const seriesId = typeof req.body.seriesId === 'string' ? req.body.seriesId.trim() : '';
+    if (seriesId && !store.getSeries(seriesId)) return res.status(404).json({ error: 'Series not found.' });
+    const duplicateResponse = (existing) => res.status(409).json({ title: existing.title, existingSeriesId: existing.id });
+    const existing = findDuplicateSeries(store.listSeries(), { scheduleLink }, seriesId);
+    if (existing) return duplicateResponse(existing);
+    try {
+      const draft = await readSeriesDraft(scheduleLink, { settings: store.getSettings() });
+      const duplicate = findDuplicateSeries(store.listSeries(), draft, seriesId);
+      if (duplicate) return duplicateResponse(duplicate);
+      return res.json({ draft });
+    } catch (error) {
+      return res.status(502).json({ error: error.message || 'Could not load the series from LiveChart.' });
+    }
+  }));
   app.get('/livechart', (req, res) => res.redirect('/settings#settings-livechart'));
   app.get('/api/livechart/status', (req, res) => res.json(discovery.status()));
   app.get('/api/livechart/sync-status', (req, res) => res.set('Cache-Control', 'no-store').json(liveChartSync.status()));

@@ -44,10 +44,14 @@ All LiveChart HTTP requests share a sequential queue with at least 6.5 seconds b
 ## Editing Releases
 
 - `New Series`: paste a LiveChart anime or schedule link to load the title automatically. A typed title is preserved. Without a LiveChart link, enter a title manually. Failed lookups retain the form without creating an empty entry.
+- `Load from LiveChart`: load metadata and upcoming German subtitle/dub releases into the form, including older titles outside the current seasons. Review the form and click `Save` to create or update the entry. Loading alone never saves or posts. Links to a specific release schedule follow that schedule only; unavailable or unsuitable selections are reported instead of silently selecting another release.
+- `Schedule source`: `Follow LiveChart` uses the normal daily and pre-post sync. `Manual schedule` keeps the entered dates, episodes, services and language versions unchanged by LiveChart; both daily and pre-post schedule requests are skipped for that entry. The link remains available for metadata lookup. Existing entries default to `Follow LiveChart`.
+- If LiveChart has no upcoming German release, `Load from LiveChart` loads only metadata and selects `Manual schedule`, keeping entered release fields. This supports later catalogue releases announced elsewhere. Switching back to `Follow LiveChart` allows its schedules to replace the manual values again.
 - Duplicate protection applies to manual saves, CSV imports and automatic discovery. LiveChart URL variants for the same anime and matching MAL IDs identify the same series; otherwise normalized exact titles are compared unless both entries have different source IDs. Separate seasons are not matched by fuzzy title rules. Manual duplicates open the existing entry without overwriting it. Older duplicates in backups are not silently deleted.
 - `Release day` and `Time`: normal weekly schedule.
 - `Next date`: manual override for a delayed or moved episode.
 - `Episodes this release`: set this to `2` or higher when a service releases multiple episodes at once. The Discord post uses a range like `Episode 01-02/12` when the total is known, then advances to the next episode and resets this field to `1`.
+- `Weekly release` sets the main release to one episode at a time with weekly continuation. `Complete series` uses the known total episode count, starts at episode 1 and disables weekly continuation. Enter the release date separately. Dub tracks keep their independent episode/date/batch fields.
 - `Language Versions`: enable additional language versions and set their next episode numbers.
 - Language version schedules: each enabled language can have its own weekday, time, or manual next date.
 - `Auto-enabled languages`: global settings for language versions found by LiveChart.
@@ -63,9 +67,12 @@ All LiveChart HTTP requests share a sequential queue with at least 6.5 seconds b
 - `Sync LiveChart now`: updates all active series that have a LiveChart link.
 - `Update from LiveChart once per day`: runs one slow daily sync at the configured time (hours and minutes, in the selected timezone).
 - `Continue weekly`: moves a manual `Next date` forward by 7 days after a post.
+- A manual release without weekly continuation clears its date and weekday after posting, so an incomplete batch with an unknown total waits for another manually entered date. A complete season with a known total finishes normally.
 - Missing time: the panel shows `time missing`, and the scheduler posts it at `MISSING_TIME_POST_TIME`.
 
 The global LiveChart sync intentionally waits between requests to reduce the chance of rate limits.
+
+For an older 12-episode title newly offered in full by Prime Video, load its LiveChart link, choose `Manual schedule` if that new release is not listed, set `Service` to `Prime Video`, `Next date` to the announced date and `Total episodes` to `12`, then click `Complete series`. Leave the time blank if it has not been announced; the configured missing-time fallback applies. Keep the entry active with a planned/airing status. For a dub-only release, leave the original's next episode blank and configure the German dub track instead. An existing finished entry should be edited and reactivated rather than duplicated.
 
 Manual full syncs and single-series syncs run in the background. The start request returns immediately instead of waiting for LiveChart, avoiding long-running requests through a reverse proxy. Settings, Finished and the series editor display progress and the final result. While a sync runs, the page reads `/api/livechart/sync-status` every few seconds; these requests do not contact LiveChart. Updated data reloads when the job finishes, unless the form has unsaved edits.
 

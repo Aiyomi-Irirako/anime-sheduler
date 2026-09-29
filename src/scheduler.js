@@ -204,7 +204,7 @@ function markPostedWithoutAdvancing(series, release, postKey, now) {
 }
 
 async function refreshLiveChartSeriesBeforePost(store, series, now, syncSeries = syncOneSeriesFromLiveChart) {
-  if (!isLiveChartLink(series.scheduleLink)) return { series, refreshed: false };
+  if (!isLiveChartLink(series.scheduleLink) || series.scheduleMode === "manual") return { series, refreshed: false };
 
   const current = store.getSeries(series.id);
   if (!current) return { series: null, refreshed: false };
@@ -249,7 +249,8 @@ export async function checkDueAnnouncements(store, discord, options = {}) {
     if (refreshed.refreshed) {
       series = refreshed.series;
       const refreshedGroups = collectDueGroups(series, settings, now, postedReleaseKeys);
-      const rolledForwardGroups = collectRolledForwardGroups(sortedGroups, series, settings, now, refreshed.live);
+      const rolledForwardGroups = series.scheduleMode === "manual" ? []
+        : collectRolledForwardGroups(sortedGroups, series, settings, now, refreshed.live);
       sortedGroups = mergeDueGroups([...refreshedGroups, ...rolledForwardGroups], settings);
       if (!sortedGroups.length) continue;
     }

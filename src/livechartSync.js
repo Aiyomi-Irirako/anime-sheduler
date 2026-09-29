@@ -98,6 +98,7 @@ function hasChanged(series, patch) {
 }
 
 export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
+  if (series.scheduleMode === "manual") return { changed: false, live: {}, skipped: true };
   const settings = store.getSettings();
   const now = options.now || DateTime.now();
   const preferredScheduleLanguage = normalizePreferredScheduleLanguage(series.liveChartImportLanguage || settings.preferredScheduleLanguage);
@@ -108,6 +109,10 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
     pendingLanguageTracks: series.languageTracks || [],
     nowTimestamp: Math.floor(now.toSeconds())
   });
+  // A user can switch to manual scheduling while this request is in flight.
+  // Keep their newly saved schedule instead of writing the older snapshot back.
+  const current = store.getSeries(series.id);
+  if (current?.scheduleMode === "manual") return { changed: false, live: {}, skipped: true, updated: current };
   const overwriteSchedule = Boolean(options.overwriteSchedule);
   const liveMainSchedule = overwriteSchedule ? live.mainUnavailable
     ? { nextDate: '', releaseDay: '', releaseTime: '' } : prepareLiveMainSchedule(live, settings) : {};
@@ -169,7 +174,7 @@ export async function syncAllLiveChart(store, options = {}) {
   const settings = store.getSettings();
   const seriesList = store
     .listSeries()
-    .filter((series) => isLiveChartLink(series.scheduleLink) && (series.enabled || series.status === "finished"));
+    .filter((series) => series.scheduleMode !== "manual" && isLiveChartLink(series.scheduleLink) && (series.enabled || series.status === "finished"));
 
   const result = {
     checked: 0,

@@ -507,6 +507,11 @@ export function advanceAfterPost(series, release) {
     next.nextDate = release.date.plus({ days: 7 }).toISODate();
   }
 
+  if (next.scheduleMode === "manual" && next.weekly === false) {
+    next.nextDate = "";
+    next.releaseDay = "";
+  }
+
   next.updatedAt = DateTime.now().toISO();
   return next;
 }
@@ -538,6 +543,10 @@ export function advanceLanguageAfterPost(series, release, postKey, postedAt = Da
       if (date.isValid) nextTrack.nextDate = date.plus({ days: 7 }).toISODate();
     } else if (release?.missingTime && release?.type === "language-weekly" && nextTrack.weekly !== false && release.date?.isValid) {
       nextTrack.nextDate = release.date.plus({ days: 7 }).toISODate();
+    }
+    if (next.scheduleMode === "manual" && nextTrack.weekly === false) {
+      nextTrack.nextDate = "";
+      nextTrack.releaseDay = "";
     }
     return nextTrack;
   });

@@ -1,6 +1,6 @@
 import { languageLabel, normalizeLanguageCode } from "./languages.js";
 import { normalizeServiceName, normalizeServiceList } from "./services.js";
-import { parseScheduleRows, isUpcomingSchedule } from "./livechartCatalog.js";
+import { selectScheduleRows, isUpcomingSchedule } from "./livechartCatalog.js";
 import { fetchLiveChartHtml, liveChartId } from "./livechartHttp.js";
 import { RELEASE_POST_EXPIRY_HOURS } from "./schedule.js";
 import { DateTime } from "luxon";
@@ -26,6 +26,21 @@ function absoluteUrl(value, baseUrl) {
 function liveChartAnimeUrl(scheduleLink) {
   const id = liveChartId(scheduleLink);
   return id ? `https://www.livechart.me/anime/${id}` : "";
+}
+
+export function liveChartScheduleTarget(value) {
+  const animeId = liveChartId(value);
+  if (!animeId) throw new Error('Enter a valid LiveChart anime or schedule link.');
+  const url = new URL(value);
+  const match = url.pathname.match(/^\/anime\/\d+(?:\/schedules(?:\/(\d+))?)?\/?$/);
+  if (!match || (match[1] && Number(match[1]) < 1)) {
+    throw new Error('Enter a LiveChart anime link or a link to one of its release schedules.');
+  }
+  const scheduleId = match[1]?.replace(/^0+(?=\d)/, '') || '';
+  const animeUrl = `https://www.livechart.me/anime/${animeId}`;
+  const schedulesUrl = `${animeUrl}/schedules`;
+  return { animeId, scheduleId, animeUrl, schedulesUrl,
+    scheduleLink: scheduleId ? `${schedulesUrl}/${scheduleId}` : schedulesUrl };
 }
 
 export function parseLiveChartTitle(html) {
@@ -76,6 +91,18 @@ function parseLiveChartEpisodeCount(html) {
 
   const count = Number.parseInt(match[1], 10);
   return Number.isFinite(count) && count > 0 ? count : null;
+}
+
+export function parseLiveChartMetadata(html, animeUrl) {
+  const $ = load(html);
+  const malLink = $('a[href*="myanimelist.net/anime/"]').first().attr('href') || '';
+  const premiereLabel = $('*').filter((_, element) => $(element).children().length === 0 &&
+    $(element).text().trim() === 'Premiere').first();
+  const premiereText = premiereLabel.parent().text().replace(/^\s*Premiere\s*/, '').trim();
+  const premiere = DateTime.fromFormat(premiereText, 'MMM d, yyyy', { locale: 'en' });
+  return { title: parseLiveChartTitle(html), imageUrl: parseLiveChartImage(html, animeUrl),
+    episodeCount: parseLiveChartEpisodeCount(html), malId: malLink.match(/\/anime\/(\d+)/)?.[1] || '',
+    premiereDate: premiere.isValid ? premiere.toISODate() : '' };
 }
 
 const SERVICE_PATTERNS = [
@@ -207,7 +234,7 @@ export function parseLiveChartEpisodes(html, options = {}) {
     : Math.floor(Date.now() / 1000);
   const preferredCodes = preferredLanguageCodes(options.preferredLanguageCodes);
   const today = DateTime.fromSeconds(nowTimestamp, { zone: options.timeZone || 'Europe/Berlin' }).toISODate();
-  const rows = parseScheduleRows(html).filter((row) => !row.regionWarning)
+  const rows = selectScheduleRows(html, options.scheduleId).filter((row) => !row.regionWarning)
     .map((row) => ({ ...row, services: row.services.length ? row.services : articleServices(row.text) }));
   const parsed = rows.filter((row) => Number.isFinite(row.episode) && !row.isReleased &&
     (!row.partialDate || row.partialDate >= today));
@@ -274,7 +301,10 @@ export function parseLiveChartEpisodes(html, options = {}) {
     ? rows.filter((item) => (item.isMain && matchesPreferredLanguage(item, preferredCodes)) ||
       (item.isDub && preferredCodes.some((code) => item.audioCodes.includes(code))))
     : [];
-  const serviceRows = preferredServiceRows.length ? preferredServiceRows : main ? [main] : [];
+  const upcomingServiceRows = preferredServiceRows.filter(item =>
+    isUpcomingSchedule(item, options, DateTime.fromSeconds(nowTimestamp)));
+  const serviceRows = upcomingServiceRows.length ? upcomingServiceRows
+    : preferredServiceRows.length ? preferredServiceRows : main ? [main] : [];
 
   return {
     nextEpisode: main?.episode ?? null,
@@ -294,11 +324,11 @@ export function parseLiveChartEpisodes(html, options = {}) {
   };
 }
 
-async function fetchLiveChartDetails(scheduleLink) {
+async function fetchLiveChartDetails(scheduleLink, fetchHtml = fetchLiveChartHtml) {
   const animeUrl = liveChartAnimeUrl(scheduleLink);
   if (!animeUrl) return { imageUrl: "", episodeCount: null };
 
-  const html = await fetchLiveChartHtml(animeUrl, { ttlMs: 24 * 3600000 });
+  const html = await fetchHtml(animeUrl, { ttlMs: 24 * 3600000 });
   return {
     imageUrl: parseLiveChartImage(html, animeUrl),
     episodeCount: parseLiveChartEpisodeCount(html)
@@ -308,8 +338,10 @@ async function fetchLiveChartDetails(scheduleLink) {
 export async function fetchLiveChartEpisodes(scheduleLink, options = {}) {
   if (!scheduleLink) throw new Error("No LiveChart link is set.");
 
-  const live = parseLiveChartEpisodes(await fetchLiveChartHtml(scheduleLink), options);
-  const details = await fetchLiveChartDetails(scheduleLink).catch((error) => {
+  const target = liveChartScheduleTarget(scheduleLink);
+  const fetchHtml = options.fetchHtml || fetchLiveChartHtml;
+  const live = parseLiveChartEpisodes(await fetchHtml(target.schedulesUrl), { ...options, scheduleId: target.scheduleId });
+  const details = await fetchLiveChartDetails(scheduleLink, fetchHtml).catch((error) => {
     if ([403, 429].includes(error.status)) throw error;
     return { imageUrl: "", episodeCount: null };
   });
