@@ -41,7 +41,7 @@ export function parseScheduleRows(html) {
     const content = text(article);
     const releaseText = header.length ? text(header) : content;
     const label = article.find('[data-label]').first().attr('data-label') || releaseText;
-    const batch = label.match(/\bAll\s+(\d+)\s+EPs\b/i);
+    const batch = label.match(/\bAll\s*(\d+)\s*EPs\b/i);
     const range = label.match(/\bEP\s*(\d+)(?:\s*[-~\u2013\u2014]\s*(\d+))?/i);
     const episode = batch ? 1 : range ? positive(range[1]) : null;
     const end = batch ? positive(batch[1]) : range ? positive(range[2]) || episode : null;
@@ -63,7 +63,10 @@ export function parseScheduleRows(html) {
     const isBroadcastJapan = /broadcast\s*\(japan\)/i.test(title);
     const services = unique(article.find('.lc-text-contextual-accent').map((_, e) => normalizeServiceName(text($(e)))).get());
     return {
+      scheduleId: String(positive(article.attr('data-release-schedule-release-schedule-id')) ||
+        positive(header.attr('href')?.match(/\/schedules\/(\d+)(?:\/|$|[?#])/)?.[1]) || ''),
       title, text: content, episode, episodeEnd: end && episode ? Math.min(Math.max(episode, end), episode + 49) : episode,
+      batchEpisodeCount: batch ? positive(batch[1]) : null,
       batch: Boolean(batch), timestamp: timestamp || Number.MAX_SAFE_INTEGER, precision,
       partialDate: precision === 3 && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '',
       approximateDate: date,
@@ -76,6 +79,15 @@ export function parseScheduleRows(html) {
       isReleased: /\bReleased/i.test(article.attr('data-release-schedule-release-schedule-id') ? releaseText : content)
     };
   }).get();
+}
+
+export function selectScheduleRows(html, scheduleId = '') {
+  const rows = parseScheduleRows(html);
+  if (!rows.length) throw new Error('No LiveChart schedules could be read.');
+  if (!scheduleId) return rows;
+  const selected = rows.filter(row => row.scheduleId === String(scheduleId));
+  if (!selected.length) throw new Error('The selected LiveChart schedule could not be found. Check the schedule link.');
+  return selected;
 }
 
 export function scheduleDateFields(row, timeZone = 'Europe/Berlin') {
@@ -98,25 +110,25 @@ export function isUpcomingSchedule(row, settings = {}, now = DateTime.now()) {
   return date.endOf(period) >= now;
 }
 
-export function hasUpcomingGermanRelease(html, settings = {}, now = DateTime.now()) {
-  const rows = parseScheduleRows(html);
-  if (!rows.length) throw new Error('No LiveChart schedules could be read.');
+export function hasUpcomingGermanRelease(html, settings = {}, now = DateTime.now(), { scheduleId = '' } = {}) {
+  const rows = selectScheduleRows(html, scheduleId);
   return rows.some((row) => isUpcomingSchedule(row, settings, now) &&
     ((row.isSubbed && row.subtitleCodes.includes('de')) || (row.isDub && row.audioCodes.includes('de'))));
 }
 
-export function buildDiscoveredSeries(candidate, scheduleHtml, detailHtml, settings, now = DateTime.now()) {
+export function buildDiscoveredSeries(candidate, scheduleHtml, detailHtml, settings, now = DateTime.now(), { scheduleId = '' } = {}) {
   const zone = settings.timeZone || 'Europe/Berlin';
   const language = settings.preferredScheduleLanguage || '';
-  const parsed = parseScheduleRows(scheduleHtml);
-  if (!parsed.length) throw new Error('No LiveChart schedules could be read.');
+  const parsed = selectScheduleRows(scheduleHtml, scheduleId);
   const rows = parsed.filter((row) => isUpcomingSchedule(row, settings, now));
   const order = (a, b) => (a.timestamp - b.timestamp) || (a.partialDate || '9999').localeCompare(b.partialDate || '9999');
   const sub = rows.filter((row) => row.isSubbed && (!language || row.subtitleCodes.includes(language)));
   const main = sub.sort(order)[0];
   const enabledCodes = settings.enabledLanguageCodes || [];
+  const selectedDubs = [];
   const languageTracks = enabledCodes.map((code) => {
     const row = rows.filter((r) => r.isDub && r.audioCodes.includes(code)).sort(order)[0];
+    if (row) selectedDubs.push(row);
     return row ? {
       code, label: languageLabel(code), enabled: true, available: true,
       nextEpisode: row.episode, episodeBatchSize: row.episode ? row.episodeEnd - row.episode + 1 : 1,
@@ -132,7 +144,8 @@ export function buildDiscoveredSeries(candidate, scheduleHtml, detailHtml, setti
   const dateFields = scheduleDateFields(main?.episode ? main : null, zone);
   return {
     title: candidate.title, service: normalizeServiceList(services.join(',')), scheduleLink: candidate.scheduleLink,
-    malId: candidate.malId, imageUrl: candidate.imageUrl, episodeCount: candidate.episodeCount,
+    malId: candidate.malId, imageUrl: candidate.imageUrl,
+    episodeCount: candidate.episodeCount ?? main?.batchEpisodeCount ?? selectedDubs.find(row => row.batchEpisodeCount)?.batchEpisodeCount ?? null,
     premiereDate: premiere.isValid ? premiere.toISODate() : '',
     ...dateFields, nextEpisode: main?.episode ?? null,
     episodeBatchSize: main?.episode ? main.episodeEnd - main.episode + 1 : 1,
