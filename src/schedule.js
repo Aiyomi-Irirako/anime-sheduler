@@ -437,7 +437,15 @@ export function shouldPostRelease(release, settings, base = DateTime.now()) {
 }
 
 export function isUnpostedFinalMainRelease(series, release, settings, base = DateTime.now()) {
-  if (!release || release.kind !== "main" || !Number.isFinite(series.episodeCount)) return false;
+  return release?.kind === "main" && isUnpostedFinalRelease(series, series, release, settings, base);
+}
+
+export function isUnpostedFinalLanguageRelease(series, track, release, settings, base = DateTime.now()) {
+  return release?.kind === "language" && isUnpostedFinalRelease(series, track, release, settings, base);
+}
+
+function isUnpostedFinalRelease(series, postedState, release, settings, base) {
+  if (!Number.isFinite(series.episodeCount)) return false;
   if (!Number.isFinite(release.episode) || release.episode < 1 || release.episode > series.episodeCount) return false;
   const end = Number.isFinite(release.episodeEnd) ? release.episodeEnd : release.episode;
   if (end !== series.episodeCount) return false;
@@ -445,10 +453,10 @@ export function isUnpostedFinalMainRelease(series, release, settings, base = Dat
   // A completed schedule may replace the final episode with "Released" before the bot's next tick.
   const releaseAt = getReleasePostDateTime(release, settings);
   if (!releaseAt || base < releaseAt || !shouldPostRelease(release, settings, base)) return false;
-  if (series.lastPostedKey === releasePostKey(series, release, settings)) return false;
-  const posted = cleanString(series.lastPostedKey).match(/:main:(\d+)(?:-(\d+))?:/);
+  if (postedState.lastPostedKey === releasePostKey(series, release, settings)) return false;
+  const posted = cleanString(postedState.lastPostedKey).match(/:(?:main|language:[^:]+):(\d+)(?:-(\d+))?:/);
   if (posted && Number(posted[2] || posted[1]) >= end) return false;
-  const lastPostedAt = DateTime.fromISO(cleanString(series.lastPostedAt));
+  const lastPostedAt = DateTime.fromISO(cleanString(postedState.lastPostedAt));
   return !lastPostedAt.isValid || lastPostedAt < releaseAt;
 }
 

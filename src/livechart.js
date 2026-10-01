@@ -137,12 +137,25 @@ function upcomingItems(items, nowTimestamp) {
   return items.filter((item) => isUpcomingTimestamp(item.timestamp, nowTimestamp));
 }
 
-function dubAlreadyPosted(item, track) {
+function dubAlreadyPosted(item, track, timeZone = 'Europe/Berlin') {
   if (!track || !Number.isFinite(item.episode)) return false;
+  // Episode counters may have advanced during a delay. A later source date is
+  // still pending even when its episode is below an earlier (incorrect) post.
+  const exact = item.timestamp !== Number.MAX_SAFE_INTEGER;
+  const releaseAt = exact ? DateTime.fromSeconds(item.timestamp) :
+    DateTime.fromISO(item.partialDate || '', { zone: timeZone });
+  if (!releaseAt.isValid) return false;
+  const postedDates = [track.lastPostedAt,
+    String(track.lastPostedKey || '').match(/:(?:release-time|missing-time):(.+)$/)?.[1]]
+    .map(value => DateTime.fromISO(value || '')).filter(value => value.isValid);
+  if (postedDates.length) {
+    // Reminders can be sent before the actual release, so also compare the
+    // scheduled date in the post key instead of only its send time.
+    return postedDates.some(postedAt => exact ? postedAt >= releaseAt :
+      postedAt.setZone(timeZone).toISODate() >= releaseAt.toISODate());
+  }
   const posted = String(track.lastPostedKey || '').match(/:language:[^:]+:(\d+)(?:-(\d+))?:/);
-  if (posted && Number(posted[2] || posted[1]) >= (item.episodeEnd || item.episode)) return true;
-  const postedAt = DateTime.fromISO(track.lastPostedAt || '');
-  return postedAt.isValid && postedAt.toSeconds() >= item.timestamp;
+  return Boolean(posted && Number(posted[2] || posted[1]) >= (item.episodeEnd || item.episode));
 }
 
 function isRecoverablePendingDub(item, code, tracks, nowTimestamp) {
@@ -259,9 +272,8 @@ export function parseLiveChartEpisodes(html, options = {}) {
     !mainItems.some((item) => item.isSubbed && matchesPreferredLanguage(item, preferredCodes));
   const languageByCode = new Map();
 
-  const upcomingDubItems = options.requirePreferredLanguage
-    ? rows.filter((row) => row.isDub && isUpcomingSchedule(row, options, DateTime.fromSeconds(nowTimestamp)))
-    : upcomingItems(parsed.filter((entry) => entry.isDub), nowTimestamp);
+  const upcomingDubItems = rows.filter((row) => row.isDub &&
+    isUpcomingSchedule(row, options, DateTime.fromSeconds(nowTimestamp)));
   const pendingTracks = options.pendingLanguageTracks || [];
   // A sync may repair a cleared date after the countdown passed. Recover only an
   // already tracked, unposted episode within the scheduler's normal posting window.
@@ -271,7 +283,7 @@ export function parseLiveChartEpisodes(html, options = {}) {
   for (const item of dubItems) {
     for (const code of item.audioCodes) {
       if (code === "ja") continue;
-      if (dubAlreadyPosted(item, pendingTracks.find((track) => track.code === code))) continue;
+      if (dubAlreadyPosted(item, pendingTracks.find((track) => track.code === code), options.timeZone)) continue;
       if (!upcomingDubItems.includes(item) && !isRecoverablePendingDub(item, code, pendingTracks, nowTimestamp)) continue;
       const existing = languageByCode.get(code);
       if (existing && existing.timestamp <= item.timestamp) continue;
@@ -296,6 +308,22 @@ export function parseLiveChartEpisodes(html, options = {}) {
   }
 
   const languageTracks = [...languageByCode.values()].map(({ timestamp, ...track }) => track);
+  const finishedLanguageCodes = [...new Set(rows.filter(row => row.isDub && row.isReleased)
+    .flatMap(row => row.audioCodes))].filter(code => !rows.some(row =>
+      row.isDub && !row.isReleased && row.audioCodes.includes(code)));
+  // A successful source read with no usable next dub must cancel a locally
+  // extrapolated weekly date. Keep pending episodes so a pause is not a finale.
+  const unscheduledLanguageTracks = pendingTracks.filter(track =>
+    Number.isFinite(track.nextEpisode) && !languageByCode.has(track.code)).map(track => {
+    const pendingRows = rows.filter(row => row.isDub && !row.isReleased && row.audioCodes.includes(track.code));
+    const source = [...pendingRows].sort((a, b) => b.timestamp - a.timestamp)[0];
+    const posted = String(track.lastPostedKey || '').match(/:language:[^:]+:(\d+)(?:-(\d+))?:/);
+    const inflated = source && posted && Number.isFinite(source.episode) &&
+      source.episode < Number(posted[2] || posted[1]);
+    return { code: track.code, nextEpisode: inflated ? source.episode : track.nextEpisode,
+      episodeBatchSize: inflated ? episodeBatchSize(pendingRows, source, row => row.audioCodes.includes(track.code)) : track.episodeBatchSize,
+      nextDate: '', releaseDay: '', releaseTime: '' };
+  });
   const germanDub = languageTracks.find((track) => track.code === "de");
   const preferredServiceRows = preferredCodes.length
     ? rows.filter((item) => (item.isMain && matchesPreferredLanguage(item, preferredCodes)) ||
@@ -318,6 +346,8 @@ export function parseLiveChartEpisodes(html, options = {}) {
     mainUnavailable: Boolean(options.requirePreferredLanguage && preferredCodes.length && !preferredMainRows.length),
     dubNextEpisode: germanDub?.nextEpisode ?? null,
     languageTracks,
+    unscheduledLanguageTracks,
+    finishedLanguageCodes,
     service: mergeServices(serviceRows),
     mainFinished,
     preferredReleaseFinished
