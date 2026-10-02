@@ -3,7 +3,7 @@ import multer from "multer";
 import path from "node:path";
 import { DateTime } from "luxon";
 import { buildAnnouncement, buildUpcomingSummary, releaseMentionRoleIds } from "./discordBot.js";
-import { APP_NAME, APP_VERSION, STATUS_OPTIONS, WEEKDAYS } from "./constants.js";
+import { APP_NAME, APP_VERSION, MAX_EPISODE_BATCH_SIZE, STATUS_OPTIONS, WEEKDAYS } from "./constants.js";
 import {
   getNextRelease,
   getFinishedDeletionDate,
@@ -1145,7 +1145,7 @@ function renderLanguageTrackSettings(series) {
         <input type="number" min="0" name="languageEpisode_${escapeHtml(key)}" value="${
           Number.isFinite(track.nextEpisode) ? escapeHtml(track.nextEpisode) : ""
         }" placeholder="Episode">
-        <input type="number" min="1" name="languageBatchSize_${escapeHtml(key)}" value="${escapeHtml(track.episodeBatchSize || 1)}" placeholder="Count">
+        <input type="number" min="1" max="${MAX_EPISODE_BATCH_SIZE}" name="languageBatchSize_${escapeHtml(key)}" value="${escapeHtml(track.episodeBatchSize || 1)}" placeholder="Count">
         <select name="languageReleaseDay_${escapeHtml(key)}">${renderDayOptions(track.releaseDay || "")}</select>
         <input type="time" name="languageReleaseTime_${escapeHtml(key)}" value="${escapeHtml(track.releaseTime || "")}">
         <input type="date" name="languageNextDate_${escapeHtml(key)}" value="${escapeHtml(track.nextDate || "")}">
@@ -1157,7 +1157,7 @@ function renderLanguageTrackSettings(series) {
   return `<div class="span-2 language-tracks">
     <div class="section-title compact">
       <h2>Dub Versions</h2>
-      <p>Enable dubbed versions that should appear in Discord posts with their own episode number.</p>
+      <p>Enable dubbed versions and enter their own episode number and date. A dub-only release does not need a main release; test posts use the next scheduled version.</p>
     </div>
     <div class="language-track-grid">${rows}</div>
   </div>`;
@@ -1220,6 +1220,7 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
           <select name="scheduleMode">${option('livechart', 'Follow LiveChart', series.scheduleMode === 'manual' ? 'manual' : 'livechart')}${option('manual', 'Manual schedule', series.scheduleMode === 'manual' ? 'manual' : 'livechart')}</select>
           <span>Manual schedule protects dates, services and language versions from LiveChart sync. Loading a draft only changes this form; save when ready.</span>
         </label>
+        <p class="span-2 muted-text">The main release fields below describe the original/subtitle release. For a dub-only release, clear the main Next episode, Next date and Release day, then enable its language and enter its episode and date under Dub Versions.</p>
         <label class="span-2">
           <span>Title</span>
           <input name="title" ${isNew ? '' : 'required'} value="${escapeHtml(series.title)}">
@@ -1263,7 +1264,7 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
         </label>
         <label>
           <span>Episodes this release</span>
-          <input type="number" min="1" name="episodeBatchSize" value="${escapeHtml(series.episodeBatchSize || 1)}">
+          <input type="number" min="1" max="${MAX_EPISODE_BATCH_SIZE}" name="episodeBatchSize" value="${escapeHtml(series.episodeBatchSize || 1)}">
         </label>
         <label>
           <span>Total episodes</span>

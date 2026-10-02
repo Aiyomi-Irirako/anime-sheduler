@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { MAX_EPISODE_BATCH_SIZE } from "./constants.js";
 
 export function cleanString(value) {
   if (value === undefined || value === null) return "";
@@ -15,7 +16,7 @@ export function parseInteger(value) {
 export function normalizeEpisodeBatchSize(value) {
   const number = parseInteger(value);
   if (!Number.isFinite(number) || number < 2) return 1;
-  return Math.min(number, 50);
+  return Math.min(number, MAX_EPISODE_BATCH_SIZE);
 }
 
 export function parseBoolean(value) {

@@ -256,26 +256,27 @@ export function getNextLanguageRelease(series, track, settings, base = DateTime.
 }
 
 export function getNextAnnouncementRelease(series, settings, base = DateTime.now()) {
-  const mainRelease = getNextRelease(series, settings, base);
-  if (!mainRelease) return null;
+  const candidates = [
+    getNextRelease(series, settings, base),
+    ...enabledLanguageTracks(series).map((track) => getNextLanguageRelease(series, track, settings, base))
+  ]
+    .filter(Boolean)
+    .map((release) => ({ release, postAt: getReleasePostDateTime(release, settings) }))
+    .filter(({ postAt }) => postAt?.isValid)
+    .sort((left, right) => left.postAt.toMillis() - right.postAt.toMillis());
+  if (!candidates.length) return null;
 
-  const mainPostAt = getReleasePostDateTime(mainRelease, settings);
-  if (!mainPostAt) return mainRelease;
+  // Preview the next usable announcement ahead of a stale saved original date.
+  // Historical releases remain available for manual tests when none are current.
+  const next = candidates.find(({ postAt }) => postAt.plus({ hours: RELEASE_POST_EXPIRY_HOURS }) >= base)
+    || candidates[0];
+  const releases = candidates.filter(({ release, postAt }) =>
+    postAt.toMillis() === next.postAt.toMillis() && release.missingTime === next.release.missingTime
+  ).map(({ release }) => release);
+  if (releases.length === 1) return releases[0];
 
-  const languageReleases = enabledLanguageTracks(series)
-    .map((track) => getNextLanguageRelease(series, track, settings, base))
-    .filter((release) => {
-      const releaseAt = getReleasePostDateTime(release, settings);
-      return releaseAt?.isValid && releaseAt.toISO() === mainPostAt.toISO();
-    });
-
-  if (!languageReleases.length) return mainRelease;
-
-  return {
-    ...mainRelease,
-    kind: "combined",
-    releases: [mainRelease, ...languageReleases]
-  };
+  const primary = releases.find((release) => release.kind !== "language") || releases[0];
+  return { ...primary, kind: "combined", releases };
 }
 
 export function listUpcoming(seriesList, settings, days = 14, base = DateTime.now()) {

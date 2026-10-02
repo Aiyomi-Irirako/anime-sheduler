@@ -3,6 +3,7 @@ import { normalizeServiceName, normalizeServiceList } from "./services.js";
 import { selectScheduleRows, isUpcomingSchedule } from "./livechartCatalog.js";
 import { fetchLiveChartHtml, liveChartId } from "./livechartHttp.js";
 import { RELEASE_POST_EXPIRY_HOURS } from "./schedule.js";
+import { MAX_EPISODE_BATCH_SIZE } from "./constants.js";
 import { DateTime } from "luxon";
 import { load } from "cheerio";
 
@@ -229,16 +230,16 @@ function sameReleaseBatch(left, right) {
 function episodeBatchSize(items, release, filter = () => true) {
   if (!release || !Number.isFinite(release.episode)) return 1;
 
-  const episodes = new Set();
-  for (const item of items.filter((entry) => sameReleaseBatch(entry, release) && filter(entry))) {
-    if (!Number.isFinite(item.episode)) continue;
-    const end = Number.isFinite(item.episodeEnd) ? Math.min(item.episodeEnd, item.episode + 49) : item.episode;
-    for (let episode = item.episode; episode <= end; episode += 1) episodes.add(episode);
+  const ranges = items.filter(entry => sameReleaseBatch(entry, release) && filter(entry) && Number.isFinite(entry.episode))
+    .sort((left, right) => left.episode - right.episode);
+  const limit = release.episode + MAX_EPISODE_BATCH_SIZE - 1;
+  let end = release.episode - 1;
+  for (const item of ranges) {
+    if (item.episode > end + 1) break;
+    end = Math.max(end, Math.min(Number.isFinite(item.episodeEnd) ? item.episodeEnd : item.episode, limit));
+    if (end === limit) break;
   }
-
-  let size = 0;
-  while (episodes.has(release.episode + size)) size += 1;
-  return Math.max(1, size);
+  return Math.max(1, end - release.episode + 1);
 }
 
 export function parseLiveChartEpisodes(html, options = {}) {

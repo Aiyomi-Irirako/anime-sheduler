@@ -2,7 +2,7 @@ import { load } from 'cheerio';
 import { DateTime } from 'luxon';
 import { normalizeLanguageCode, languageLabel } from './languages.js';
 import { normalizeServiceList, normalizeServiceName } from './services.js';
-import { WEEKDAYS } from './constants.js';
+import { MAX_EPISODE_BATCH_SIZE, WEEKDAYS } from './constants.js';
 
 const text = (node) => node.text().replace(/\s+/g, ' ').trim();
 const unique = (values) => [...new Set(values.filter(Boolean))];
@@ -65,7 +65,7 @@ export function parseScheduleRows(html) {
     return {
       scheduleId: String(positive(article.attr('data-release-schedule-release-schedule-id')) ||
         positive(header.attr('href')?.match(/\/schedules\/(\d+)(?:\/|$|[?#])/)?.[1]) || ''),
-      title, text: content, episode, episodeEnd: end && episode ? Math.min(Math.max(episode, end), episode + 49) : episode,
+      title, text: content, episode, episodeEnd: end && episode ? Math.min(Math.max(episode, end), episode + MAX_EPISODE_BATCH_SIZE - 1) : episode,
       batchEpisodeCount: batch ? positive(batch[1]) : null,
       batch: Boolean(batch), timestamp: timestamp || Number.MAX_SAFE_INTEGER, precision,
       partialDate: precision === 3 && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '',
