@@ -5,7 +5,8 @@ import {
   normalizeLanguageTracks,
   normalizePreferredScheduleLanguage
 } from "./languages.js";
-import { getNextRelease, isUnpostedFinalMainRelease, shouldDeleteFinishedSeries } from "./schedule.js";
+import { getNextRelease, getNextLanguageRelease, isUnpostedFinalMainRelease, isUnpostedFinalLanguageRelease,
+  shouldDeleteFinishedSeries } from "./schedule.js";
 import { scheduleDateFields } from "./livechartCatalog.js";
 import { normalizeDailyTime } from "./utils.js";
 
@@ -102,7 +103,7 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
   const settings = store.getSettings();
   const now = options.now || DateTime.now();
   const preferredScheduleLanguage = normalizePreferredScheduleLanguage(series.liveChartImportLanguage || settings.preferredScheduleLanguage);
-  const live = await (options.fetchEpisodes || fetchLiveChartEpisodes)(series.scheduleLink, {
+  const fetched = await (options.fetchEpisodes || fetchLiveChartEpisodes)(series.scheduleLink, {
     preferredLanguageCodes: preferredScheduleLanguage ? [preferredScheduleLanguage] : [],
     timeZone: settings.timeZone,
     requirePreferredLanguage: series.liveChartLanguageStrict,
@@ -113,17 +114,25 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
   // Keep their newly saved schedule instead of writing the older snapshot back.
   const current = store.getSeries(series.id);
   if (current?.scheduleMode === "manual") return { changed: false, live: {}, skipped: true, updated: current };
+  const episodeCount = Number.isFinite(fetched.episodeCount) ? fetched.episodeCount : series.episodeCount;
+  const live = { ...fetched, unscheduledLanguageTracks: (fetched.unscheduledLanguageTracks || []).filter(incoming => {
+    const track = (series.languageTracks || []).find(item => item.code === incoming.code);
+    // "Released" may replace a finale just before its scheduled announcement.
+    // A missing/expired schedule is not evidence that a paused dub has finished.
+    return !(track && (fetched.finishedLanguageCodes || []).includes(track.code) &&
+      isUnpostedFinalLanguageRelease({ ...series, episodeCount }, track,
+        getNextLanguageRelease({ ...series, episodeCount }, track, settings, now), settings, now));
+  }) };
   const overwriteSchedule = Boolean(options.overwriteSchedule);
   const liveMainSchedule = overwriteSchedule ? live.mainUnavailable
     ? { nextDate: '', releaseDay: '', releaseTime: '' } : prepareLiveMainSchedule(live, settings) : {};
-  const liveLanguageTracks = prepareLiveLanguageTracks((live.languageTracks || [])
+  const liveLanguageTracks = prepareLiveLanguageTracks([...(live.languageTracks || []), ...(live.unscheduledLanguageTracks || [])]
     .filter((track) => !series.liveChartImportLanguage || track.code === series.liveChartImportLanguage), settings);
   const languageTracks = mergeLanguageTracks(
     series.languageTracks || [],
     liveLanguageTracks,
     series.liveChartImportLanguage ? [series.liveChartImportLanguage] : settings.enabledLanguageCodes || []
   );
-  const episodeCount = Number.isFinite(live.episodeCount) ? live.episodeCount : series.episodeCount;
   const pendingFinal = live.mainFinished && isUnpostedFinalMainRelease(
     { ...series, episodeCount },
     getNextRelease({ ...series, episodeCount }, settings, now),

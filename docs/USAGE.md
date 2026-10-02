@@ -54,6 +54,7 @@ All LiveChart HTTP requests share a sequential queue with at least 6.5 seconds b
 - `Weekly release` sets the main release to one episode at a time with weekly continuation. `Complete series` uses the known total episode count, starts at episode 1 and disables weekly continuation. Enter the release date separately. Dub tracks keep their independent episode/date/batch fields.
 - `Language Versions`: enable additional language versions and set their next episode numbers.
 - Language version schedules: each enabled language can have its own weekday, time, or manual next date.
+- For LiveChart-managed dubs, a successful sync clears extrapolated weekly dates when the source has no usable upcoming release. Paused dubs wait for a new source date without being marked complete. A later rescheduled release can also correct an episode counter that previously advanced too far; earlier post history remains intact.
 - `Auto-enabled languages`: global settings for language versions found by LiveChart.
 - `LiveChart sync`: updates a single series from its LiveChart schedule link.
 - LiveChart sync overwrites the main release date, weekday, and time when LiveChart exposes an exact timestamp.
