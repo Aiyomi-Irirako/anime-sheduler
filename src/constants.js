@@ -5,6 +5,7 @@ const packageJson = require("../package.json");
 
 export const APP_NAME = "Anime Sheduler";
 export const APP_VERSION = packageJson.version;
+export const MAX_EPISODE_BATCH_SIZE = 10000;
 
 export const WEEKDAYS = [
   { key: "monday", label: "Monday", de: "Montag", luxon: 1 },
