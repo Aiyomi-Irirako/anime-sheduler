@@ -91,13 +91,14 @@ test("completion embeds include full title, total episodes, preferred service an
   assert.equal(unknown.fields.some((field) => field.name === "TVDB ID"), false);
 });
 
-test("sends once at the boundary, with no duplicate after reload, backup restore or series edit", async (t) => {
+test("sends the initial notice once, with no duplicate after reload, backup restore or series edit", async (t) => {
   const { store, filePath, discord, sent } = await setup(t);
   const changesBefore = store.snapshot().changeLog.length;
   assert.equal((await checkCompletionAnnouncements(store, discord, { now: due.minus({ seconds: 1 }) })).posted, 0);
   assert.deepEqual(await checkCompletionAnnouncements(store, discord, { now: due }), { posted: 1, failed: 0 });
   assert.equal(sent.length, 2);
   assert.equal(store.getSeries("victoria").completionNotifiedAt, due.toISO());
+  assert.equal(store.getSeries("victoria").completionNotificationCycleAt, due.toISO());
   assert.deepEqual(store.getSeries("victoria").completionNotifiedChannelIds, [channelA, channelB]);
   assert.equal(store.snapshot().posts[0].type, "auto-completed");
   assert.equal(store.snapshot().posts[0].episodeCount, 9);
@@ -122,6 +123,7 @@ test("offline and failed sends stay pending and are caught up later", async (t) 
   discord.sendToChannel = async () => { throw new Error("Discord unavailable"); };
   assert.deepEqual(await checkCompletionAnnouncements(store, discord, { now: due }), { posted: 0, failed: 1 });
   assert.equal(store.getSeries("victoria").completionNotifiedAt, "");
+  assert.equal(store.getSeries("victoria").completionNotificationCycleAt, "");
   assert.deepEqual(store.getSeries("victoria").completionNotifiedChannelIds, []);
   discord.sendToChannel = originalSend;
   assert.equal((await checkCompletionAnnouncements(store, discord, { now: due.plus({ days: 1 }) })).posted, 1);

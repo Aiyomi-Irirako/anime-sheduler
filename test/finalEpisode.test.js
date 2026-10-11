@@ -79,16 +79,60 @@ test("a daily sync retains a due finale until posting succeeds", async (t) => {
   assert.equal(messages.length, 1);
 });
 
-test("keeps newly finished entries with old episode totals through daily cleanup", async (t) => {
+test("keeps unacknowledged finished entries through daily cleanup indefinitely", async (t) => {
   const { store, series } = await setup(t, {
     enabled: false, status: "finished", nextEpisode: null, finishedAt: "2026-09-01T17:00:00+02:00"
   });
   await store.upsertSeries({ ...series, episodeCountUpdatedAt: "2026-07-01T12:00:00+02:00" });
-  const result = await syncAllLiveChart(store, { now: now.plus({ days: 3 }), delayMs: 0 });
+  const result = await syncAllLiveChart(store, { now: now.plus({ months: 3 }), delayMs: 0 });
   assert.equal(result.deleted, 0);
   assert.ok(isSeriesComplete(store.getSeries(series.id)));
-  assert.equal(getFinishedDeletionDate(store.getSeries(series.id)).toISODate(), "2026-10-01");
-  assert.equal(shouldDeleteFinishedSeries(store.getSeries(series.id), {}, now.plus({ months: 1 })), true);
+  assert.equal(getFinishedDeletionDate(store.getSeries(series.id)), null);
+  assert.equal(shouldDeleteFinishedSeries(store.getSeries(series.id), {}, now.plus({ years: 1 })), false);
+});
+
+test("daily cleanup removes acknowledged entries after their retention period", async (t) => {
+  const { store, series } = await setup(t, {
+    enabled: false, status: "finished", nextEpisode: null, finishedAt: "2026-09-01T17:00:00+02:00",
+    episodeCountUpdatedAt: "2026-09-01T17:00:00+02:00",
+    completionAcknowledged: true, completionAcknowledgedAt: "2026-09-12T17:00:00+02:00"
+  });
+  // Preserve the supplied historical episode-total timestamp through normalization.
+  await store.upsertSeries({ ...series, episodeCountUpdatedAt: "2026-09-01T17:00:00+02:00" });
+  const before = await syncAllLiveChart(store, { now: DateTime.fromISO("2026-10-12T16:59:59+02:00"), delayMs: 0 });
+  assert.equal(before.deleted, 0);
+  const after = await syncAllLiveChart(store, { now: DateTime.fromISO("2026-10-12T17:00:00+02:00"), delayMs: 0 });
+  assert.equal(after.deleted, 1);
+  assert.equal(store.getSeries(series.id), null);
+});
+
+test("cleanup preserves a reminder reopened while another deletion is saving", async (t) => {
+  const finishedAt = "2026-06-01T17:00:00+02:00";
+  const { store, series } = await setup(t, {
+    scheduleMode: "manual", enabled: false, status: "finished", nextEpisode: null,
+    finishedAt, completionAcknowledged: true,
+    completionAcknowledgedAt: "2026-06-02T17:00:00+02:00"
+  });
+  await store.upsertSeries({ ...series, episodeCountUpdatedAt: finishedAt });
+  const second = await store.upsertSeries({
+    ...store.getSeries(series.id), id: "second-finished", title: "Second finished series", scheduleLink: ""
+  });
+  await store.upsertSeries({ ...second, episodeCountUpdatedAt: finishedAt });
+
+  const originalDelete = store.deleteSeries.bind(store);
+  t.mock.method(store, "deleteSeries", async (...args) => {
+    const deleted = await originalDelete(...args);
+    if (args[0] === series.id) {
+      await store.upsertSeries({ ...store.getSeries(second.id), completionAcknowledged: false });
+    }
+    return deleted;
+  });
+
+  const result = await syncAllLiveChart(store, { now, delayMs: 0 });
+  assert.equal(result.deleted, 1);
+  assert.equal(store.getSeries(series.id), null);
+  assert.equal(store.getSeries(second.id).completionAcknowledged, false);
+  assert.equal(getFinishedDeletionDate(store.getSeries(second.id)), null);
 });
 
 for (const [label, overrides, syncAt] of [
@@ -121,13 +165,17 @@ test("retains a final batch and a finale with missing time", async (t) => {
   assert.equal((await checkDueAnnouncements(store, discord, { now: fallbackNow.plus({ minutes: 1 }) })).posted, 0);
 });
 
-test("retention starts after completion, including delayed dubs and unknown totals", () => {
+test("retention requires acknowledgment and starts after the latest lifecycle date", () => {
   const series = { status: "finished", nextEpisode: null, languageTracks: [], episodeCount: 9,
-    episodeCountUpdatedAt: "2026-07-01T12:00:00+02:00", finishedAt: "2026-09-01T17:00:00+02:00" };
+    episodeCountUpdatedAt: "2026-07-01T12:00:00+02:00", finishedAt: "2026-09-01T17:00:00+02:00",
+    completionAcknowledged: true, completionAcknowledgedAt: "2026-09-01T17:00:00+02:00" };
   assert.equal(shouldDeleteFinishedSeries(series, {}, now.plus({ days: 29 })), false);
   assert.equal(shouldDeleteFinishedSeries(series, {}, now.plus({ months: 1 })), true);
   assert.equal(getFinishedDeletionDate({ ...series, episodeCount: null }).toISODate(), "2026-10-01");
   assert.equal(getFinishedDeletionDate({ ...series, episodeCountUpdatedAt: "2026-09-10T12:00:00+02:00" }).toISODate(), "2026-10-10");
+  assert.equal(getFinishedDeletionDate({ ...series, completionAcknowledgedAt: "2026-09-20T12:00:00+02:00" }).toISODate(), "2026-10-20");
+  assert.equal(getFinishedDeletionDate({ ...series, completionAcknowledged: false }), null);
+  assert.equal(getFinishedDeletionDate({ ...series, completionAcknowledged: undefined }), null);
   assert.equal(getFinishedDeletionDate({ ...series, languageTracks: [{ code: "de", enabled: true, nextEpisode: 8 }] }), null);
   assert.equal(getFinishedDeletionDate({ ...series, finishedAt: "" }), null);
 });

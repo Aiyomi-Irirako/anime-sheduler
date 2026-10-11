@@ -1206,6 +1206,20 @@ button.secondary:hover {
   border-radius: var(--radius);
 }
 
+.completion-views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.completion-confirmation {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  min-width: 190px;
+}
+
 table {
   width: 100%;
   min-width: 1080px;

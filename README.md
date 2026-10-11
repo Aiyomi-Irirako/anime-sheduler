@@ -4,7 +4,7 @@ A self-hosted Discord bot with a web panel for weekly anime release schedules.
 
 Anime Sheduler imports CSV season data, lets you edit release dates and language versions, syncs selected data from LiveChart, and posts due episodes to Discord.
 
-Current version: `1.8.3`
+Current version: `1.9.0`
 
 ## Highlights
 
@@ -19,7 +19,7 @@ Current version: `1.8.3`
 - Configurable preferred LiveChart schedule language and matching regional services
 - Automatic Discord announcements when episodes are due
 - Optional manual-only Discord posting for test servers, with a server-level automatic-post lock
-- One-time Discord completion notices one week after all tracked releases finish
+- One-week completion notices followed by a configurable weekly digest of open completions
 - Multiple Discord servers, channels, forum posts, and role mentions
 - Slash commands: `/upcoming` and `/shedule day`
 - JSON database backup export and restore

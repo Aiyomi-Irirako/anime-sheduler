@@ -7,6 +7,8 @@ import { APP_NAME, APP_VERSION, MAX_EPISODE_BATCH_SIZE, STATUS_OPTIONS, WEEKDAYS
 import {
   getNextRelease,
   getFinishedDeletionDate,
+  getCompletionNotificationDate,
+  getNextCompletionDigestDate,
   getNextAnnouncementRelease,
   listUpcomingTodayTomorrow,
   formatReleaseDate,
@@ -126,6 +128,7 @@ function renderPage(title, content) {
     <nav class="nav-links">
       <a href="/">Dashboard</a>
       <a href="/finished">Finished</a>
+      <a href="/completion">Completion</a>
       <a href="/series/new">New Series</a>
       <a href="/settings">Settings</a>
       <a href="/changelog">Changelog</a>
@@ -497,6 +500,15 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
         <span>Missing time post</span>
         <input name="missingTimePostTime" value="${escapeHtml(settings.missingTimePostTime || "18:00")}" placeholder="18:00">
       </label>
+      <label>
+        <span>Weekly completion digest day</span>
+        <select name="completionDigestDay">${WEEKDAYS.map((day) => option(day.key, day.label, settings.completionDigestDay || "sunday")).join("")}</select>
+      </label>
+      <label>
+        <span>Weekly completion digest time</span>
+        <input type="time" step="60" name="completionDigestTime" value="${escapeHtml(settings.completionDigestTime || "18:00")}" required>
+      </label>
+      <p class="span-2">After the individual completion notice, unhandled series are collected in one weekly Discord digest. Times use the configured time zone. Manage confirmations in <a href="/completion">Completion</a>.</p>
     </div>`;
 
   const liveChartFields = `<div class="grid-form settings-field-grid">
@@ -882,7 +894,7 @@ function renderFinishedPage(data, query, syncStatus = {}) {
       const isDue = deletionDate && now >= deletionDate;
       const cleanup = deletionDate
         ? deletionDate.setLocale("en").toFormat("dd LLL yyyy HH:mm")
-        : "Waiting for completion date";
+        : series.completionAcknowledged ? "Waiting for completion date" : "Awaiting confirmation";
       const totalUpdated = Number.isFinite(series.episodeCount)
         ? formatLifecycleDate(series.episodeCountUpdatedAt, data.settings)
         : "No total count";
@@ -894,6 +906,7 @@ function renderFinishedPage(data, query, syncStatus = {}) {
         <td>${escapeHtml(totalUpdated)}</td>
         <td>
           <span class="pill ${isDue ? "warn" : "off"}">${escapeHtml(isDue ? "Due on next sync" : cleanup)}</span>
+          ${isDue ? `<small>${escapeHtml(cleanup)}</small>` : ""}
         </td>
         <td><a class="button secondary" href="/series/${escapeHtml(series.id)}">Edit</a></td>
       </tr>`;
@@ -910,14 +923,14 @@ function renderFinishedPage(data, query, syncStatus = {}) {
       </div>
       <div class="hero-meta">
         <span>${finished.length} finished</span>
-        <span>Kept for at least 1 month after completion</span>
+        <a href="/completion">Manage completion reminders</a>
       </div>
     </section>
     <section class="panel wide">
       <div class="section-title split">
         <div>
           <h2>Finished Entries</h2>
-          <p>Entries stay checked during LiveChart sync and remain here for at least one month after all tracked releases finish. A later change to the total episode count extends this period.</p>
+          <p>Archive of completed releases. Manage confirmations in <a href="/completion">Completion</a>. Unhandled entries stay in the archive; handled entries stay for at least one month after confirmation. A later change to the total episode count can extend this period.</p>
         </div>
         <form method="post" action="/sync-livechart-all">
           <input type="hidden" name="returnTo" value="/finished">
@@ -943,6 +956,79 @@ function renderFinishedPage(data, query, syncStatus = {}) {
       </div>
     </section>`
   );
+}
+
+function completionReminderStatus(series, settings) {
+  if (series.completionAcknowledged) {
+    return `Handled. Reminders stopped. Confirmed: ${formatLifecycleDate(series.completionAcknowledgedAt, settings)}`;
+  }
+  const notifiedAt = DateTime.fromISO(cleanString(series.completionNotifiedAt), { zone: settings.timeZone || "Europe/Berlin" });
+  if (notifiedAt.isValid) {
+    return `Included in the weekly digest. Completion notice sent: ${formatLifecycleDate(series.completionNotifiedAt, settings)}`;
+  }
+  const firstNotice = getCompletionNotificationDate(series, settings);
+  return firstNotice
+    ? `First notice: ${formatLifecycleDate(firstNotice.toISO(), settings)}. Included in the weekly digest after this notice is sent.`
+    : "Waiting for completion date. Included in the weekly digest after the first notice is sent.";
+}
+
+function renderCompletionPage(data, query) {
+  const handledView = query.view === "handled";
+  const completed = data.series.filter(isSeriesComplete);
+  const openCount = completed.filter((series) => !series.completionAcknowledged).length;
+  const handledCount = completed.length - openCount;
+  const visible = completed
+    .filter((series) => Boolean(series.completionAcknowledged) === handledView)
+    .sort((a, b) => cleanString(b.finishedAt || b.updatedAt).localeCompare(cleanString(a.finishedAt || a.updatedAt)));
+  const digestDay = WEEKDAYS.find((day) => day.key === data.settings.completionDigestDay)?.label || "Sunday";
+  const digestTime = data.settings.completionDigestTime || "18:00";
+  const nextDigest = getNextCompletionDigestDate(data.settings, DateTime.now());
+  const returnTo = handledView ? "/completion?view=handled" : "/completion";
+  const rows = visible.map((series) => `<tr>
+    <td><a class="title-link" href="/series/${escapeHtml(series.id)}">${escapeHtml(series.title)}</a></td>
+    <td>${renderServiceBadges(series.service, series.preferredService)}</td>
+    <td>${escapeHtml(formatLifecycleDate(series.finishedAt, data.settings))}</td>
+    <td>${escapeHtml(completionReminderStatus(series, data.settings))}</td>
+    <td>
+      <form method="post" action="/series/${escapeHtml(series.id)}/completion" class="completion-confirmation">
+        <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}">
+        <label class="check"><input type="checkbox" name="completionAcknowledged" ${toFormBoolean(series.completionAcknowledged)}> Completion handled</label>
+        <button type="submit" class="button secondary">Save</button>
+      </form>
+    </td>
+  </tr>`).join("");
+  return renderPage("Completion", `${messageFromQuery(query)}
+    <section class="hero-panel">
+      <div>
+        <p class="eyebrow">Confirmations</p>
+        <h1>Completion</h1>
+        <p>Mark completed series as handled to stop Discord reminders.</p>
+      </div>
+      <div class="hero-meta">
+        <span>${openCount} open</span>
+        <span>${handledCount} handled</span>
+      </div>
+    </section>
+    <section class="panel wide">
+      <div class="section-title split">
+        <div>
+          <h2>Weekly completion digest</h2>
+          <p>One week after finishing, each series receives one individual notice. Unhandled series then appear together in one weekly Discord digest.</p>
+          <p>Every ${escapeHtml(digestDay)} at ${escapeHtml(digestTime)} (${escapeHtml(data.settings.timeZone || "Europe/Berlin")}).${nextDigest ? ` Next: ${escapeHtml(formatLifecycleDate(nextDigest.toISO(), data.settings))}.` : ""} <a href="/settings#settings-schedule">Change in Settings</a></p>
+        </div>
+      </div>
+      <nav class="completion-views" aria-label="Completion views">
+        <a class="button ${handledView ? "secondary" : ""}" href="/completion" ${handledView ? "" : 'aria-current="page"'}>Open (${openCount})</a>
+        <a class="button ${handledView ? "" : "secondary"}" href="/completion?view=handled" ${handledView ? 'aria-current="page"' : ""}>Handled (${handledCount})</a>
+      </nav>
+      <p>${handledView ? "Uncheck Completion handled and save to resume weekly reminders." : "Entries waiting for their first notice are shown here too. Checking Completion handled also cancels that first notice."}</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Title</th><th>Service</th><th>Finished</th><th>Reminder status</th><th>Confirmation</th></tr></thead>
+          <tbody>${rows || `<tr><td colspan="5">${handledView ? "No handled completions yet." : "No open completions."}</td></tr>`}</tbody>
+        </table>
+      </div>
+    </section>`);
 }
 
 function changelogSourceLabel(source) {
@@ -1172,13 +1258,15 @@ function renderSeriesLifecyclePanel(series, settings) {
     : ""}`;
   const cleanup = deletionDate
     ? deletionDate.setLocale("en").toFormat("dd LLL yyyy HH:mm")
-    : "Waiting for lifecycle data";
+    : series.completionAcknowledged ? "Waiting for lifecycle data" : "Awaiting confirmation";
+  const reminderStatus = completionReminderStatus(series, settings);
 
   return `<section class="panel lifecycle-panel">
     <div class="section-title split">
       <div>
         <h2>Finished Lifecycle</h2>
         <p>${escapeHtml(basis)}</p>
+        <p>${escapeHtml(reminderStatus)} <a href="/completion">Manage completions</a></p>
       </div>
       <span class="pill off">Auto-delete: ${escapeHtml(cleanup)}</span>
     </div>
@@ -1291,6 +1379,11 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
           <label class="check"><input type="checkbox" name="enabled" ${toFormBoolean(series.enabled)}> Active</label>
           <label class="check"><input type="checkbox" name="weekly" ${toFormBoolean(series.weekly)}> Continue weekly</label>
         </div>
+        ${isSeriesComplete(series) ? `<div class="span-2">
+          <input type="hidden" name="completionAcknowledgementPresent" value="1">
+          <label class="check boxed-check"><input type="checkbox" name="completionAcknowledged" ${toFormBoolean(series.completionAcknowledged)}> Completion handled</label>
+          <p class="muted-text">Check to stop weekly Discord reminders. Uncheck to resume. Open reminders keep this entry from automatic deletion.</p>
+        </div>` : ""}
         ${renderLanguageTrackSettings(series)}
         <div class="form-actions span-2">
           <button type="submit">Save</button>
@@ -1355,6 +1448,7 @@ function formToSeries(body, id = "") {
     service: cleanString(body.service),
     preferredService: cleanString(body.preferredService),
     streamingServiceId: cleanString(body.streamingServiceId),
+    ...(body.completionAcknowledgementPresent === "1" ? { completionAcknowledged: body.completionAcknowledged === "on" } : {}),
     ...(Object.hasOwn(body, "tvdbId") ? { tvdbId: cleanString(body.tvdbId) } : {}),
     premiereDate: cleanString(body.premiereDate),
     releaseDay: cleanString(body.releaseDay),
@@ -1434,6 +1528,13 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
     "/finished",
     asyncRoute(async (req, res) => {
       res.send(renderFinishedPage(store.snapshot(), req.query, liveChartSync.status()));
+    })
+  );
+
+  app.get(
+    "/completion",
+    asyncRoute(async (req, res) => {
+      res.send(renderCompletionPage(store.snapshot(), req.query));
     })
   );
 
@@ -1655,6 +1756,18 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
       if (!existing) return res.redirect("/?error=Series not found");
       await store.upsertSeries({ ...existing, ...formToSeries(req.body, existing.id) });
       res.redirect(`/series/${encodeURIComponent(existing.id)}?ok=Series saved`);
+    })
+  );
+
+  app.post(
+    "/series/:id/completion",
+    asyncRoute(async (req, res) => {
+      const series = store.getSeries(req.params.id);
+      if (!series) return res.status(404).send(renderPage("Not Found", "<p>Series not found.</p>"));
+      if (!isSeriesComplete(series)) return res.status(400).send(renderPage("Completion pending", "<p>Completion can only be confirmed after all tracked releases finish.</p>"));
+      await store.upsertSeries({ ...series, completionAcknowledged: req.body.completionAcknowledged === "on" });
+      const returnTo = req.body.returnTo === "/completion?view=handled" ? "/completion?view=handled&" : "/completion?";
+      res.redirect(`${returnTo}ok=Completion reminder updated`);
     })
   );
 

@@ -43,6 +43,17 @@ function normalizeDiscordRoleIds(value) {
   return normalizeDiscordChannelIds(value);
 }
 
+function normalizeCompletionDigest(value = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const cycleAt = cleanString(source.cycleAt);
+  const completedAt = cleanString(source.completedAt);
+  return {
+    cycleAt: DateTime.fromISO(cycleAt).isValid ? cycleAt : "",
+    sentChannelIds: normalizeDiscordChannelIds(source.sentChannelIds),
+    completedAt: DateTime.fromISO(completedAt).isValid ? completedAt : ""
+  };
+}
+
 const DEFAULT_DATA = {
   settings: {
     timeZone: process.env.TIME_ZONE || DEFAULT_TIME_ZONE,
@@ -57,6 +68,8 @@ const DEFAULT_DATA = {
     automaticDiscordPostsEnabled: true,
     summaryLimit: 12,
     missingTimePostTime: normalizeTime(process.env.MISSING_TIME_POST_TIME) || "18:00",
+    completionDigestDay: "sunday",
+    completionDigestTime: "18:00",
     liveChartSyncEnabled: true,
     liveChartSyncHour: 5,
     liveChartSyncTime: "05:00",
@@ -71,6 +84,7 @@ const DEFAULT_DATA = {
   },
   series: [],
   posts: [],
+  completionDigest: normalizeCompletionDigest(),
   liveChartDiscovery: normalizeDiscoveryState(),
   changeLog: []
 };
@@ -102,7 +116,9 @@ const CHANGELOG_FIELD_LABELS = [
   ["status", "Status"],
   ["enabled", "Enabled"],
   ["weekly", "Continue weekly"],
-  ["finishedAt", "Finished at"]
+  ["finishedAt", "Finished at"],
+  ["completionAcknowledged", "Completion handled"],
+  ["completionAcknowledgedAt", "Completion handled at"]
 ];
 
 function clone(value) {
@@ -258,6 +274,8 @@ function normalizeStoreData(input = {}) {
   );
   data.settings.enabledLanguageCodes = normalizeEnabledLanguageCodes(data.settings.enabledLanguageCodes);
   data.settings.automaticDiscordPostsEnabled = parseBoolean(data.settings.automaticDiscordPostsEnabled);
+  data.settings.completionDigestDay = normalizeReleaseDay(data.settings.completionDigestDay) || "sunday";
+  data.settings.completionDigestTime = normalizeTime(data.settings.completionDigestTime) || "18:00";
   data.settings.preferredScheduleLanguage = Object.prototype.hasOwnProperty.call(
     settingsSource,
     "preferredScheduleLanguage"
@@ -266,6 +284,7 @@ function normalizeStoreData(input = {}) {
     : data.settings.enabledLanguageCodes[0] || "";
   data.series = Array.isArray(data.series) ? data.series.map((item) => normalizeSeries(item, item)) : [];
   data.posts = Array.isArray(data.posts) ? data.posts : [];
+  data.completionDigest = normalizeCompletionDigest(data.completionDigest);
   data.liveChartDiscovery = normalizeDiscoveryState(data.liveChartDiscovery);
   data.settings.liveChartDiscoverySeason = normalizeDiscoverySeason(data.settings.liveChartDiscoverySeason);
   data.settings.liveChartDiscoveryEnabled = parseBoolean(data.settings.liveChartDiscoveryEnabled);
@@ -362,7 +381,10 @@ function normalizeSeries(input, existing = {}) {
     lastPostedAt: cleanString(input.lastPostedAt || existing.lastPostedAt),
     episodeCountUpdatedAt,
     finishedAt: cleanString(input.finishedAt || existing.finishedAt),
-    completionNotifiedAt: cleanString(input.completionNotifiedAt || existing.completionNotifiedAt),
+    completionAcknowledged: parseBoolean(input.completionAcknowledged ?? existing.completionAcknowledged),
+    completionAcknowledgedAt: cleanString(input.completionAcknowledgedAt ?? existing.completionAcknowledgedAt),
+    completionNotificationCycleAt: cleanString(input.completionNotificationCycleAt ?? existing.completionNotificationCycleAt),
+    completionNotifiedAt: cleanString(input.completionNotifiedAt ?? existing.completionNotifiedAt),
     completionNotifiedChannelIds: normalizeDiscordChannelIds(
       input.completionNotifiedChannelIds ?? existing.completionNotifiedChannelIds
     ),
@@ -374,9 +396,17 @@ function normalizeSeries(input, existing = {}) {
   };
 
   normalized.finishedAt = isSeriesComplete(normalized) ? normalized.finishedAt || now : "";
-  if (!normalized.finishedAt) {
+  const completionChanged = existing.id && normalized.finishedAt !== cleanString(existing.finishedAt);
+  if (!normalized.finishedAt || completionChanged) {
+    normalized.completionAcknowledged = false;
+    normalized.completionAcknowledgedAt = "";
+    normalized.completionNotificationCycleAt = "";
     normalized.completionNotifiedAt = "";
     normalized.completionNotifiedChannelIds = [];
+  } else {
+    normalized.completionAcknowledgedAt = normalized.completionAcknowledged
+      ? cleanString(existing.completionAcknowledged ? existing.completionAcknowledgedAt : "") || normalized.completionAcknowledgedAt || now
+      : "";
   }
   return normalized;
 }
@@ -498,6 +528,20 @@ export class Store {
     return this.data.settings;
   }
 
+  getCompletionDigest() {
+    return clone(this.data.completionDigest);
+  }
+
+  async updateCompletionDigest(patch = {}) {
+    const current = this.data.completionDigest;
+    this.data.completionDigest = normalizeCompletionDigest({
+      cycleAt: patch.cycleAt ?? current.cycleAt,
+      sentChannelIds: patch.sentChannelIds ?? current.sentChannelIds,
+      completedAt: patch.completedAt ?? current.completedAt
+    });
+    await this.save();
+  }
+
   async updateSettings(patch) {
     const discordChannelIds = normalizeDiscordChannelIds(patch.discordChannelIds);
     const liveChartSyncTime = normalizeTime(patch.liveChartSyncTime) ||
@@ -519,6 +563,8 @@ export class Store {
         ? this.data.settings.automaticDiscordPostsEnabled : parseBoolean(patch.automaticDiscordPostsEnabled),
       summaryLimit: Math.max(1, parseInteger(patch.summaryLimit) ?? 12),
       missingTimePostTime: normalizeTime(patch.missingTimePostTime) || this.data.settings.missingTimePostTime || "18:00",
+      completionDigestDay: normalizeReleaseDay(patch.completionDigestDay) || this.data.settings.completionDigestDay || "sunday",
+      completionDigestTime: normalizeTime(patch.completionDigestTime) || this.data.settings.completionDigestTime || "18:00",
       liveChartSyncEnabled: parseBoolean(patch.liveChartSyncEnabled),
       liveChartSyncTime,
       liveChartSyncHour: Number(liveChartSyncTime.split(":")[0]),

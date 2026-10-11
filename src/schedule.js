@@ -56,29 +56,67 @@ export function isSeriesComplete(series) {
 }
 
 export function getCompletionNotificationDate(series, settings = {}) {
-  if (!isSeriesComplete(series)) return null;
+  if (!isSeriesComplete(series) || series.completionAcknowledged === true) return null;
 
-  const finishedAt = DateTime.fromISO(cleanString(series.finishedAt), { zone: settings.timeZone || "Europe/Berlin" });
-  return finishedAt.isValid ? finishedAt.plus({ weeks: 1 }) : null;
+  const zone = settings.timeZone || "Europe/Berlin";
+  const notifiedAt = DateTime.fromISO(cleanString(series.completionNotifiedAt), { zone });
+  if (notifiedAt.isValid) return null;
+  const finishedAt = DateTime.fromISO(cleanString(series.finishedAt), { zone });
+  if (!finishedAt.isValid) return null;
+  return finishedAt.plus({ weeks: 1 });
+}
+
+export function getCompletionNotificationCycleDate(series, settings = {}, base = DateTime.now()) {
+  const due = getCompletionNotificationDate(series, settings);
+  if (!due || !base.isValid || base < due) return null;
+  return due;
 }
 
 export function shouldNotifyCompletion(series, settings = {}, base = DateTime.now()) {
-  if (cleanString(series.completionNotifiedAt)) return false;
-  const notificationDate = getCompletionNotificationDate(series, settings);
-  return Boolean(notificationDate && base >= notificationDate);
+  return Boolean(getCompletionNotificationCycleDate(series, settings, base));
+}
+
+function completionDigestSchedule(settings, base) {
+  const now = base.setZone(settings.timeZone || "Europe/Berlin");
+  if (!now.isValid) return null;
+  const day = WEEKDAY_BY_KEY.get(normalizeReleaseDay(settings.completionDigestDay) || "sunday");
+  const time = parseTimeParts(normalizeTime(settings.completionDigestTime) || "18:00");
+  return { now, day, time };
+}
+
+export function getCompletionDigestCycleDate(settings = {}, base = DateTime.now()) {
+  const schedule = completionDigestSchedule(settings, base);
+  if (!schedule) return null;
+  const { now, day, time } = schedule;
+  const daysSince = (now.weekday - day.luxon + 7) % 7;
+  let candidate = now.startOf("day").minus({ days: daysSince }).set(time);
+  if (candidate > now) candidate = candidate.minus({ weeks: 1 }).set(time);
+  return candidate;
+}
+
+export function getNextCompletionDigestDate(settings = {}, base = DateTime.now()) {
+  const schedule = completionDigestSchedule(settings, base);
+  if (!schedule) return null;
+  const { now, day, time } = schedule;
+  const daysUntil = (day.luxon - now.weekday + 7) % 7;
+  let candidate = now.startOf("day").plus({ days: daysUntil }).set(time);
+  if (candidate <= now) candidate = candidate.plus({ weeks: 1 }).set(time);
+  return candidate;
 }
 
 export function getFinishedDeletionDate(series, settings = {}) {
-  if (!isSeriesComplete(series)) return null;
+  if (!isSeriesComplete(series) || series.completionAcknowledged !== true) return null;
 
   const zone = settings.timeZone || "Europe/Berlin";
   const finishedAt = DateTime.fromISO(cleanString(series.finishedAt), { zone });
   if (!finishedAt.isValid) return null;
 
   const totalUpdatedAt = DateTime.fromISO(cleanString(series.episodeCountUpdatedAt), { zone });
-  const since = Number.isFinite(series.episodeCount) && totalUpdatedAt.isValid && totalUpdatedAt > finishedAt
+  let since = Number.isFinite(series.episodeCount) && totalUpdatedAt.isValid && totalUpdatedAt > finishedAt
     ? totalUpdatedAt
     : finishedAt;
+  const acknowledgedAt = DateTime.fromISO(cleanString(series.completionAcknowledgedAt), { zone });
+  if (acknowledgedAt.isValid && acknowledgedAt > since) since = acknowledgedAt;
   return since.setZone(zone).plus({ months: FINISHED_SERIES_RETENTION_MONTHS });
 }
 
