@@ -113,6 +113,7 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
   // A user can switch to manual scheduling while this request is in flight.
   // Keep their newly saved schedule instead of writing the older snapshot back.
   const current = store.getSeries(series.id);
+  if (!current) return { changed: false, live: {}, skipped: true, updated: null };
   if (current?.scheduleMode === "manual") return { changed: false, live: {}, skipped: true, updated: current };
   const episodeCount = Number.isFinite(fetched.episodeCount) ? fetched.episodeCount : series.episodeCount;
   const live = { ...fetched, unscheduledLanguageTracks: (fetched.unscheduledLanguageTracks || []).filter(incoming => {
@@ -164,6 +165,11 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
     nextDate: mainFinished && overwriteSchedule ? "" : liveMainSchedule.nextDate ?? series.nextDate,
     imageUrl: overwriteSchedule && live.imageUrl ? live.imageUrl : series.imageUrl || live.imageUrl,
     languageTracks,
+    completionAcknowledged: current.completionAcknowledged,
+    completionAcknowledgedAt: current.completionAcknowledgedAt,
+    completionNotificationCycleAt: current.completionNotificationCycleAt,
+    completionNotifiedAt: current.completionNotifiedAt,
+    completionNotifiedChannelIds: current.completionNotifiedChannelIds,
     lastLiveChartCheckedAt: now.toISO()
   };
 
@@ -269,7 +275,10 @@ export async function syncAllLiveChart(store, options = {}) {
   }
 
   if (!result.rateLimited) {
-    for (const series of [...store.listSeries()]) {
+    for (const entry of [...store.listSeries()]) {
+      // An acknowledgment can be cleared while an earlier deletion is being saved.
+      const series = store.getSeries(entry.id);
+      if (!series) continue;
       if (failedIds.has(series.id)) continue;
       if (!shouldDeleteFinishedSeries(series, settings, options.now)) continue;
 

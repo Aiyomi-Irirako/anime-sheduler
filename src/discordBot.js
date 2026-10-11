@@ -309,7 +309,7 @@ export function buildCompletionAnnouncement(series, settings = {}, now = DateTim
   const embed = new EmbedBuilder()
     .setColor(0x8bb4ff)
     .setTitle(truncate(`${series.title} - Completed`, 256))
-    .setDescription("This series has finished. All tracked releases are complete.")
+    .setDescription("This series has finished. All tracked releases are complete. This first notice is sent one week after completion. Unhandled entries then appear in the weekly digest until you mark them as handled in the Completion tab.")
     .addFields(
       { name: "Episodes", value: Number.isFinite(series.episodeCount) && series.episodeCount > 0 ? String(series.episodeCount) : "Unknown", inline: true },
       { name: "Service", value: truncate(pickPreferredService(series.service, series.preferredService) || "Unknown", 1024), inline: true },
@@ -327,6 +327,66 @@ export function buildCompletionAnnouncement(series, settings = {}, now = DateTim
   if (scheduleUrl) embed.setURL(scheduleUrl);
   if (imageUrl) embed.setThumbnail(imageUrl);
   return { embeds: [embed], allowedMentions: { parse: [] } };
+}
+
+function completionDigestText(value) {
+  return cleanString(value)
+    .replace(/\s+/g, " ")
+    .replace(/([\\*_`~|><\[\]()#])/g, "\\$1")
+    .replaceAll("@", "@\u200B");
+}
+
+function completionDigestRow(series, { markdown = true } = {}) {
+  const title = cleanString(series?.title).replace(/\s+/g, " ") || "Untitled series";
+  const episodes = Number.isFinite(series?.episodeCount) && series.episodeCount > 0
+    ? String(series.episodeCount) : "Unknown";
+  const service = pickPreferredService(series?.service, series?.preferredService) || "Unknown";
+  const scheduleUrl = normalizeHttpUrl(series?.scheduleLink);
+  const tvdbId = cleanString(series?.tvdbId).replace(/\s+/g, " ");
+  const text = markdown ? completionDigestText : (value) => cleanString(value).replace(/\s+/g, " ");
+  let row = `- ${markdown ? `**${text(title)}**` : title} — Episodes: ${episodes} · Service: ${text(service)}`;
+  if (scheduleUrl) {
+    // Keep user-supplied URL punctuation from changing the Markdown link boundary.
+    const escapedUrl = scheduleUrl.replace(/[\\()<>\[\]]/g, (character) =>
+      `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+    row += markdown ? ` · [LiveChart](${escapedUrl})` : ` · LiveChart: ${scheduleUrl}`;
+  }
+  if (tvdbId) row += ` · TVDB ID: ${text(tvdbId)}`;
+  return row;
+}
+
+export function buildCompletionDigestAnnouncement(seriesList, settings = {}, now = DateTime.now()) {
+  const entries = Array.isArray(seriesList) ? seriesList : [];
+  const intro = `${entries.length} completed ${entries.length === 1 ? "series is" : "series are"} awaiting confirmation.`;
+  const instruction = "Open the Completion tab and check Completion handled to stop reminders for an entry.";
+  const prefix = `${intro}\n${instruction}`;
+  const rows = entries.map((series) => completionDigestRow(series));
+  const completeDescription = rows.length ? `${prefix}\n\n${rows.join("\n")}` : "No completed series are awaiting confirmation.";
+  let description = completeDescription;
+  let files;
+
+  if (description.length > 4096) {
+    const notice = (count) => `${count} of ${rows.length} shown; the complete list is attached as open-completions.txt.`;
+    const rowBudget = 4096 - prefix.length - 4 - notice(rows.length).length;
+    const visible = [];
+    let used = 0;
+    for (const row of rows) {
+      const nextLength = used + (visible.length ? 1 : 0) + row.length;
+      if (nextLength > rowBudget) break;
+      visible.push(row);
+      used = nextLength;
+    }
+    description = `${prefix}\n\n${visible.length ? `${visible.join("\n")}\n\n` : ""}${notice(visible.length)}`;
+    const text = `${prefix}\n\n${entries.map((series) => completionDigestRow(series, { markdown: false })).join("\n")}\n`;
+    files = [{ attachment: Buffer.from(text, "utf8"), name: "open-completions.txt" }];
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0x8bb4ff)
+    .setTitle("Open completion reminders")
+    .setDescription(description)
+    .setTimestamp(now.toJSDate());
+  return { embeds: [embed], allowedMentions: { parse: [] }, ...(files ? { files } : {}) };
 }
 
 function summaryDateLabel(release, settings, base = DateTime.now()) {

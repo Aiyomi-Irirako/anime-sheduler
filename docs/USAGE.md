@@ -116,15 +116,19 @@ The default release description distinguishes new original episodes, dub episode
 
 After an automatic post, only the release that was posted is advanced. Main episodes and language versions are tracked separately.
 
-Completed series remain in `Finished` for at least one month after all tracked releases finish. A later change to the total episode count restarts the one-month retention period. Episode totals announced before completion do not shorten this period. Entries already deleted by an older version require a backup to restore.
+Completed series remain in the `Finished` archive while their completion reminder is open. Manage confirmations separately in `Completion`: check `Completion handled` and click `Save` when you have handled a series. Open entries are protected from automatic deletion. After confirmation, entries remain for at least one more month; a later change to the total episode count can extend this period. Entries already deleted by an older version require a backup to restore.
 
 ### Completion Notices
 
-One week after the stored completion time (`finishedAt`), the scheduler sends a one-time Discord notice to the configured channels. The notice includes the series title, total episode count, selected streaming service, and completion date. Unknown episode totals or services are shown as `Unknown` instead of being guessed. Title, service ID and TVDB ID copy fields are included as in release posts. Completion notices do not ping release roles.
+One week after the stored completion time (`finishedAt`), the scheduler sends one individual Discord completion notice to the configured channels. It includes the series title, total episode count, selected streaming service, and completion date. Unknown episode totals or services are shown as `Unknown` instead of being guessed. Title, service ID and TVDB ID copy fields are included as in release posts. Completion notices do not ping release roles.
 
-A series is complete only when the main release and all enabled language versions have finished. The notice is due seven calendar days later at the same local time in the configured timezone and is sent on the next scheduler tick. Release reminder settings do not shift it. Existing finished entries are eligible too; overdue notices are sent while the entry is still retained, including after a restart or a Discord outage. No extra LiveChart requests are made for these notices.
+A series is complete only when the main release and all enabled language versions have finished. The individual notice is due seven calendar days later at the same local time in the configured timezone and is sent on the next scheduler tick. Release reminder settings do not shift it. No extra LiveChart requests are made for completion reminders.
 
-Successful delivery is stored with the series and included in JSON backups. If delivery fails in some channels, only those channels are retried. Returning a series to an unfinished state resets its completion notice, so a later completion starts a new week. The existing one-month cleanup policy is unchanged.
+After that individual notice, open entries are collected into one weekly Discord digest per configured channel. Choose its weekday and time in `Settings`; the default is Sunday at 18:00 in the configured timezone. The `Completion` tab shows the schedule and lets you manage open and handled entries. Check `Completion handled` to remove a series from future digests. Unchecking makes it eligible again for the next digest; it does not repeat the individual notice. This confirmation is separate from the release status `Finished`.
+
+The digest contains only series whose individual notice was successfully delivered before that week's scheduled time. A notice sent at or after the digest time joins the following week, so a series does not get its first notice and a digest reminder together. The schedule keeps its local weekday and time across daylight-saving changes. If a list exceeds Discord's embed limits, the same message includes a text attachment with the complete list.
+
+Successful delivery, weekly digest progress and the handled checkbox are included in JSON backups. Only failed channels are retried within a round, including after a restart; the next week starts a fresh round for all channels. Empty rounds send no message. After an outage, only the latest due digest is considered, without replaying missed weeks. Existing entries that received the old one-time notice join the digest while they remain open. Returning a series to an unfinished state, such as a later dub release, resets its confirmation and individual notice so its later completion starts afresh.
 
 ## Slash Commands
 

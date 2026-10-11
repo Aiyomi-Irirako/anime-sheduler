@@ -4,14 +4,16 @@ import {
   advanceAfterPost,
   getNextLanguageRelease,
   getNextRelease,
-  getCompletionNotificationDate,
+  getCompletionNotificationCycleDate,
+  getCompletionDigestCycleDate,
   getReleasePostDateTime,
+  isSeriesComplete,
   isUnpostedFinalMainRelease,
   releasePostKey,
   shouldPostRelease,
   shouldNotifyCompletion
 } from "./schedule.js";
-import { buildAnnouncement, buildCompletionAnnouncement, releaseMentionRoleIds } from "./discordBot.js";
+import { buildAnnouncement, buildCompletionAnnouncement, buildCompletionDigestAnnouncement, releaseMentionRoleIds } from "./discordBot.js";
 import { enabledLanguageTracks } from "./languages.js";
 import { isLiveChartLink, syncOneSeriesFromLiveChart } from "./livechartSync.js";
 import { cleanString } from "./utils.js";
@@ -321,10 +323,15 @@ export async function checkCompletionAnnouncements(store, discord, options = {})
     const series = store.getSeries(entry.id);
     if (!series || !shouldNotifyCompletion(series, settings, now)) continue;
 
+    const notificationDate = getCompletionNotificationCycleDate(series, settings, now);
+    if (!notificationDate) continue;
+    const cycleAt = notificationDate.toISO();
+    // These receipts belong to the initial notice, including legacy partial sends.
+    const previousChannelIds = series.completionNotifiedChannelIds || [];
     const message = buildCompletionAnnouncement(series, settings, now);
     let result;
     try {
-      result = await discord.post(message, undefined, { excludeChannelIds: series.completionNotifiedChannelIds || [] });
+      result = await discord.post(message, undefined, { excludeChannelIds: previousChannelIds });
     } catch (error) {
       failed += 1;
       console.warn(`Completion announcement failed for "${series.title}": ${error.message}`);
@@ -332,15 +339,18 @@ export async function checkCompletionAnnouncements(store, discord, options = {})
     }
 
     const current = store.getSeries(series.id);
-    if (!current || current.finishedAt !== series.finishedAt) continue;
+    if (!current || current.finishedAt !== series.finishedAt || current.completionAcknowledged || !isSeriesComplete(current) ||
+        cleanString(current.completionNotificationCycleAt) !== cleanString(series.completionNotificationCycleAt) ||
+        cleanString(current.completionNotifiedAt) !== cleanString(series.completionNotifiedAt)) continue;
     const allSent = !result.failed.length;
     const channelIds = [...new Set([
-      ...(current.completionNotifiedChannelIds || []),
+      ...previousChannelIds,
       ...result.sent.map((item) => item.channelId)
     ])];
     await store.replaceSeries(current.id, {
       ...current,
-      completionNotifiedAt: allSent ? now.toISO() : "",
+      completionNotificationCycleAt: cycleAt,
+      completionNotifiedAt: allSent ? now.toISO() : current.completionNotifiedAt,
       completionNotifiedChannelIds: channelIds
     }, { source: "scheduler-completion" });
 
@@ -351,7 +361,7 @@ export async function checkCompletionAnnouncements(store, discord, options = {})
         title: current.title,
         episodeCount: current.episodeCount,
         finishedAt: current.finishedAt,
-        notificationAt: getCompletionNotificationDate(current, settings).toISO(),
+        notificationAt: cycleAt,
         channelIds: result.sent.map((item) => item.channelId),
         message
       });
@@ -360,7 +370,69 @@ export async function checkCompletionAnnouncements(store, discord, options = {})
     if (!allSent) failed += 1;
   }
 
-  return { posted, failed };
+  const digest = await checkCompletionDigestAnnouncements(store, discord, { now });
+  return { posted: posted + digest.posted, failed: failed + digest.failed, ...(digest.reason ? { reason: digest.reason } : {}) };
+}
+
+export async function checkCompletionDigestAnnouncements(store, discord, options = {}) {
+  if (!discord.enabled || !discord.ready) return { posted: 0, failed: 0, reason: "discord_not_ready" };
+  const settings = store.getSettings();
+  if (!automaticPostsEnabled(settings)) return { posted: 0, failed: 0, reason: "automatic_posts_disabled" };
+
+  const now = (options.now || DateTime.now()).setZone(settings.timeZone || "Europe/Berlin");
+  const cycle = getCompletionDigestCycleDate(settings, now);
+  if (!cycle) return { posted: 0, failed: 0 };
+  const progress = store.getCompletionDigest();
+  const previousCycle = DateTime.fromISO(progress.cycleAt, { zone: settings.timeZone || "Europe/Berlin" });
+  const sameCycle = previousCycle.isValid && previousCycle.toMillis() === cycle.toMillis();
+  // A changed schedule must not replay a week that predates the saved round.
+  if ((previousCycle.isValid && previousCycle > cycle) || (sameCycle && progress.completedAt)) return { posted: 0, failed: 0 };
+
+  const entries = store.listSeries().filter((series) => {
+    if (!isSeriesComplete(series) || series.completionAcknowledged) return false;
+    const notifiedAt = DateTime.fromISO(cleanString(series.completionNotifiedAt), { zone: settings.timeZone || "Europe/Berlin" });
+    // The first notice gets its own post. Only earlier notices enter this round.
+    return notifiedAt.isValid && notifiedAt < cycle;
+  }).sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+  const cycleAt = cycle.toISO();
+  if (!entries.length) {
+    // Close empty rounds too, so reopening an entry waits for the next scheduled post.
+    await store.updateCompletionDigest({ cycleAt, sentChannelIds: [], completedAt: now.toISO() });
+    return { posted: 0, failed: 0 };
+  }
+
+  const previousChannelIds = sameCycle ? progress.sentChannelIds : [];
+  const message = buildCompletionDigestAnnouncement(entries, settings, now);
+  let result;
+  try {
+    result = await discord.post(message, undefined, { excludeChannelIds: previousChannelIds });
+  } catch (error) {
+    console.warn(`Completion digest failed: ${error.message}`);
+    return { posted: 0, failed: 1 };
+  }
+  const allSent = !result.failed.length;
+  const current = store.getCompletionDigest();
+  if (current.cycleAt !== progress.cycleAt || current.completedAt !== progress.completedAt ||
+      JSON.stringify(current.sentChannelIds) !== JSON.stringify(progress.sentChannelIds)) {
+    // A restore or another round completed while this send was in flight.
+    return { posted: result.sent.length ? 1 : 0, failed: allSent ? 0 : 1 };
+  }
+  await store.updateCompletionDigest({
+    cycleAt,
+    sentChannelIds: [...new Set([...previousChannelIds, ...result.sent.map((item) => item.channelId)])],
+    completedAt: allSent ? now.toISO() : ""
+  });
+  if (result.sent.length) {
+    await store.addPostLog({
+      type: "auto-completion-digest",
+      seriesIds: entries.map((series) => series.id),
+      title: `Open completions (${entries.length})`,
+      notificationAt: cycleAt,
+      channelIds: result.sent.map((item) => item.channelId),
+      message
+    });
+  }
+  return { posted: result.sent.length ? 1 : 0, failed: allSent ? 0 : 1 };
 }
 
 export function startScheduler(store, discord) {
