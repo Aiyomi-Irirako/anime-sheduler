@@ -1238,6 +1238,10 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
           <span>Streaming service ID</span>
           <input name="streamingServiceId" maxlength="1000" autocomplete="off" value="${escapeHtml(series.streamingServiceId)}">
         </label>
+        <label class="span-2">
+          <span>TVDB ID</span>
+          <input name="tvdbId" maxlength="1000" autocomplete="off" value="${escapeHtml(series.tvdbId || '')}">
+        </label>
         <label>
           <span>Status</span>
           <select name="status">${renderStatusOptions(series.status)}</select>
@@ -1351,6 +1355,7 @@ function formToSeries(body, id = "") {
     service: cleanString(body.service),
     preferredService: cleanString(body.preferredService),
     streamingServiceId: cleanString(body.streamingServiceId),
+    ...(Object.hasOwn(body, "tvdbId") ? { tvdbId: cleanString(body.tvdbId) } : {}),
     premiereDate: cleanString(body.premiereDate),
     releaseDay: cleanString(body.releaseDay),
     releaseTime: cleanString(body.releaseTime),
@@ -1592,6 +1597,7 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
             service: "",
             preferredService: "",
             streamingServiceId: "",
+            tvdbId: "",
             premiereDate: "",
             releaseDay: "",
             releaseTime: "",

@@ -28,13 +28,14 @@ test("keeps meaningful title words that are not release qualifiers", () => {
   assert.equal(copyableSeriesTitle("GROW UP SHOW -Sunflower Circus-"), "GROW UP SHOW -Sunflower Circus-");
 });
 
-test("adds the cleaned title as a text code block to announcements", () => {
+test("adds the cleaned title, service ID and TVDB ID as copyable announcement fields", () => {
   const message = buildAnnouncement(
     {
       title: "The Quintessential Quintuplets Specials",
       service: "Crunchyroll",
       preferredService: "",
       streamingServiceId: "G6EXAMPLE123",
+      tvdbId: "  123456  ",
       scheduleLink: "https://www.livechart.me/anime/11921/schedules",
       imageUrl: "",
       note: "",
@@ -75,16 +76,22 @@ test("adds the cleaned title as a text code block to announcements", () => {
     value: "```text\nG6EXAMPLE123\n```",
     inline: false
   });
+  assert.deepEqual(message.embeds[0].data.fields.at(-1), {
+    name: "TVDB ID",
+    value: "```text\n123456\n```",
+    inline: false
+  });
   assert.equal(message.embeds[0].data.fields.some((item) => item.name === "\u200B"), false);
 });
 
-test("omits the service ID copy field when no ID was entered", () => {
+test("omits optional ID copy fields when no IDs were entered", () => {
   const message = buildAnnouncement(
     {
       title: "Series without service ID",
       service: "Crunchyroll",
       preferredService: "",
       streamingServiceId: "",
+      tvdbId: "   ",
       scheduleLink: "",
       imageUrl: "",
       note: "",
@@ -104,4 +111,5 @@ test("omits the service ID copy field when no ID was entered", () => {
   );
 
   assert.equal(message.embeds[0].data.fields.some((item) => item.name === "Service ID"), false);
+  assert.equal(message.embeds[0].data.fields.some((item) => item.name === "TVDB ID"), false);
 });
