@@ -287,6 +287,10 @@ export function buildAnnouncement(series, release, settings) {
     });
   }
 
+  if (cleanString(series.tvdbId)) {
+    embed.addFields({ name: "TVDB ID", value: copyFieldValue(series.tvdbId), inline: false });
+  }
+
   if (scheduleUrl) {
     embed.setURL(scheduleUrl);
   }
@@ -316,6 +320,9 @@ export function buildCompletionAnnouncement(series, settings = {}, now = DateTim
 
   if (cleanString(series.streamingServiceId)) {
     embed.addFields({ name: "Service ID", value: copyFieldValue(series.streamingServiceId), inline: false });
+  }
+  if (cleanString(series.tvdbId)) {
+    embed.addFields({ name: "TVDB ID", value: copyFieldValue(series.tvdbId), inline: false });
   }
   if (scheduleUrl) embed.setURL(scheduleUrl);
   if (imageUrl) embed.setThumbnail(imageUrl);

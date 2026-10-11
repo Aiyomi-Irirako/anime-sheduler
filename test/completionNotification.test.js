@@ -68,6 +68,7 @@ test("completion embeds include full title, total episodes, preferred service an
   const message = buildCompletionAnnouncement({
     ...completedSeries, title: "Example Season 2", service: "Crunchyroll, aniverse", preferredService: "aniverse",
     streamingServiceId: "ABC123", scheduleLink: "https://www.livechart.me/anime/13315/schedules",
+    tvdbId: "  123456  ",
     imageUrl: "https://example.com/poster.jpg"
   }, settings, due);
   const embed = message.embeds[0].toJSON();
@@ -78,6 +79,7 @@ test("completion embeds include full title, total episodes, preferred service an
   assert.equal(embed.fields.find((field) => field.name === "Finished").value, "Tue, 01 Sep 2026");
   assert.equal(embed.fields.find((field) => field.name === "Title").value, "```text\nExample\n```");
   assert.equal(embed.fields.find((field) => field.name === "Service ID").value, "```text\nABC123\n```");
+  assert.deepEqual(embed.fields.at(-1), { name: "TVDB ID", value: "```text\n123456\n```", inline: false });
   assert.equal(embed.thumbnail.url, "https://example.com/poster.jpg");
   assert.equal(embed.url, "https://www.livechart.me/anime/13315/schedules");
   assert.deepEqual(message.allowedMentions, { parse: [] });
@@ -86,6 +88,7 @@ test("completion embeds include full title, total episodes, preferred service an
   assert.equal(unknown.fields.find((field) => field.name === "Episodes").value, "Unknown");
   assert.equal(unknown.fields.find((field) => field.name === "Service").value, "Unknown");
   assert.equal(unknown.fields.some((field) => field.name === "Service ID"), false);
+  assert.equal(unknown.fields.some((field) => field.name === "TVDB ID"), false);
 });
 
 test("sends once at the boundary, with no duplicate after reload, backup restore or series edit", async (t) => {

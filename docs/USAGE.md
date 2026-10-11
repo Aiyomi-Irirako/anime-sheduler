@@ -108,9 +108,9 @@ If a release has no exact time, the bot posts it at `MISSING_TIME_POST_TIME`. Th
 
 Automatic release posts and manual series test posts can ping selected Discord roles. Summary posts do not ping those roles.
 
-Release embeds include compact plain-text copy fields for the base anime title and, when entered, its streaming service ID. Trailing labels such as specials, seasons, parts, and cours are omitted from the title field without changing the stored or displayed series title.
+Release embeds include compact plain-text copy fields for the base anime title and, when entered, its streaming service ID and TVDB ID. The optional TVDB ID can be entered in the series editor or imported from the CSV `tvdb_id` column; LiveChart does not supply it. Trailing labels such as specials, seasons, parts, and cours are omitted from the title field without changing the stored or displayed series title.
 
-Episode fields include the known total, for example `Episode 05/12`, `Episode 05-06/12`, or `Episode 03/12 (German)`. Schedule summaries and the web panel also show totals. Discord embed headings keep the current episode without the total. When the total is unknown, the label stays as `Episode 05` without a guessed denominator. Copy fields contain only the title or service ID, not episode information.
+Episode fields include the known total, for example `Episode 05/12`, `Episode 05-06/12`, or `Episode 03/12 (German)`. Schedule summaries and the web panel also show totals. Discord embed headings keep the current episode without the total. When the total is unknown, the label stays as `Episode 05` without a guessed denominator. Copy fields contain only the title or ID, not episode information.
 
 The default release description distinguishes new original episodes, dub episodes, and combined releases. For example, a combined original/German release says `New original and German dub episodes are available now.` A custom series note or the missing-time fallback description still takes precedence.
 
@@ -120,7 +120,7 @@ Completed series remain in `Finished` for at least one month after all tracked r
 
 ### Completion Notices
 
-One week after the stored completion time (`finishedAt`), the scheduler sends a one-time Discord notice to the configured channels. The notice includes the series title, total episode count, selected streaming service, and completion date. Unknown episode totals or services are shown as `Unknown` instead of being guessed. Title and service ID copy fields are included as in release posts. Completion notices do not ping release roles.
+One week after the stored completion time (`finishedAt`), the scheduler sends a one-time Discord notice to the configured channels. The notice includes the series title, total episode count, selected streaming service, and completion date. Unknown episode totals or services are shown as `Unknown` instead of being guessed. Title, service ID and TVDB ID copy fields are included as in release posts. Completion notices do not ping release roles.
 
 A series is complete only when the main release and all enabled language versions have finished. The notice is due seven calendar days later at the same local time in the configured timezone and is sent on the next scheduler tick. Release reminder settings do not shift it. Existing finished entries are eligible too; overdue notices are sent while the entry is still retained, including after a restart or a Discord outage. No extra LiveChart requests are made for these notices.
 
