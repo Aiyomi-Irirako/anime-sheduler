@@ -13,8 +13,8 @@ import {
   shouldPostRelease,
   shouldNotifyCompletion
 } from "./schedule.js";
-import { buildAnnouncement, buildCompletionAnnouncement, buildCompletionDigestAnnouncement, releaseMentionRoleIds } from "./discordBot.js";
-import { enabledLanguageTracks } from "./languages.js";
+import { buildAnnouncement, buildCompletionAnnouncement, buildCompletionDigestAnnouncement, buildLateDubAnnouncement, releaseMentionRoleIds } from "./discordBot.js";
+import { enabledLanguageTracks, languageLabel, normalizeEnabledLanguageCodes } from "./languages.js";
 import { isLiveChartLink, syncOneSeriesFromLiveChart } from "./livechartSync.js";
 import { cleanString } from "./utils.js";
 import { automaticPostsEnabled } from "./discordPosting.js";
@@ -306,7 +306,78 @@ export async function checkDueAnnouncements(store, discord, options = {}) {
     }
   }
 
-  return { posted, skipped };
+  const late = await checkLateDubAnnouncements(store, discord, { now });
+  return { posted: posted + late.posted, skipped: skipped + late.failed, ...(late.reason ? { reason: late.reason } : {}) };
+}
+
+export async function checkLateDubAnnouncements(store, discord, options = {}) {
+  if (!discord.enabled || !discord.ready) return { posted: 0, failed: 0, reason: "discord_not_ready" };
+  const initialSettings = store.getSettings?.() || store.snapshot().settings;
+  if (!automaticPostsEnabled(initialSettings)) return { posted: 0, failed: 0, reason: "automatic_posts_disabled" };
+  const now = options.now || DateTime.now();
+  let posted = 0;
+  let failed = 0;
+
+  for (const entry of [...(store.listSeries?.() || store.snapshot().series)]) {
+    const keys = (entry.lateDubNotices || []).filter((notice) => !notice.notifiedAt && !notice.suppressed).map((notice) => notice.key);
+    for (const key of keys) {
+      const settings = store.getSettings?.() || initialSettings;
+      if (!automaticPostsEnabled(settings)) return { posted, failed, reason: "automatic_posts_disabled" };
+      const series = store.getSeries(entry.id);
+      const notice = series?.lateDubNotices?.find((item) => item.key === key);
+      if (!series?.enabled || !notice || notice.notifiedAt || notice.suppressed) continue;
+      const detectedAt = DateTime.fromISO(notice.detectedAt);
+      if (!detectedAt.isValid || now < detectedAt) continue;
+      const track = (series.languageTracks || []).find((item) => item.code === notice.languageCode);
+      if (track ? !track.enabled || track.available === false
+        : !normalizeEnabledLanguageCodes(settings.enabledLanguageCodes).includes(notice.languageCode)) continue;
+      if (series.liveChartImportLanguage && series.liveChartImportLanguage !== notice.languageCode) continue;
+      // A regular release already announced this dub. Do not add a redundant
+      // introduction, but finish any catch-up delivery that had partly succeeded.
+      if ((track?.lastPostedKey || track?.lastPostedAt) && !notice.sentChannelIds.length) continue;
+
+      const message = buildLateDubAnnouncement(series, notice, settings, now);
+      let result;
+      try {
+        result = await discord.post(message, undefined, { excludeChannelIds: notice.sentChannelIds });
+      } catch (error) {
+        failed += 1;
+        console.warn(`Late dub announcement failed for "${series.title}": ${error.message}`);
+        continue;
+      }
+      const allSent = !result.failed.length;
+      if (result.sent.length) posted += 1;
+      if (!allSent) failed += 1;
+      const current = store.getSeries(series.id);
+      const currentNotice = current?.lateDubNotices?.find((item) => item.key === key);
+      if (!currentNotice || currentNotice.notifiedAt ||
+          JSON.stringify(currentNotice) !== JSON.stringify(notice)) continue;
+      await store.replaceSeries(current.id, {
+        ...current,
+        lateDubNotices: current.lateDubNotices.map((item) => item.key === key ? {
+          ...item,
+          notifiedAt: allSent ? now.toISO() : "",
+          sentChannelIds: [...new Set([...item.sentChannelIds, ...result.sent.map((sent) => sent.channelId)])]
+        } : item)
+      }, { source: "scheduler-late-dub" });
+      if (result.sent.length) {
+        await store.addPostLog({
+          type: "auto-late-dub",
+          seriesId: current.id,
+          title: current.title,
+          languageCode: notice.languageCode,
+          languageLabel: languageLabel(notice.languageCode),
+          episode: notice.kind === "release" ? notice.episode : null,
+          releaseAt: notice.releaseAt || "",
+          nextEpisode: notice.nextEpisode,
+          detectedAt: notice.detectedAt,
+          channelIds: result.sent.map((sent) => sent.channelId),
+          message
+        });
+      }
+    }
+  }
+  return { posted, failed };
 }
 
 export async function checkCompletionAnnouncements(store, discord, options = {}) {

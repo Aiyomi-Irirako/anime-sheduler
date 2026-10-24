@@ -23,6 +23,7 @@ import {
 import { normalizePreferredService, normalizeServiceList } from "./services.js";
 import { normalizeDiscoverySeason, normalizeDiscoveryState } from "./livechartDiscovery.js";
 import { findDuplicateSeries, seriesIdentity } from "./seriesIdentity.js";
+import { normalizeLateDubNotices, planLateDubNotices } from "./lateDub.js";
 
 function normalizeDiscordChannelIds(value) {
   const raw = Array.isArray(value) ? value : value ? [value] : [];
@@ -388,6 +389,7 @@ function normalizeSeries(input, existing = {}) {
     completionNotifiedChannelIds: normalizeDiscordChannelIds(
       input.completionNotifiedChannelIds ?? existing.completionNotifiedChannelIds
     ),
+    lateDubNotices: normalizeLateDubNotices(input.lateDubNotices ?? existing.lateDubNotices),
     lastLiveChartCheckedAt: cleanString(input.lastLiveChartCheckedAt || existing.lastLiveChartCheckedAt),
     liveChartLanguageStrict: parseBoolean(input.liveChartLanguageStrict ?? existing.liveChartLanguageStrict),
     liveChartImportLanguage: normalizePreferredScheduleLanguage(input.liveChartImportLanguage ?? existing.liveChartImportLanguage),
@@ -611,6 +613,9 @@ export class Store {
     const normalized = normalizeSeries(input, existing || {});
     if (!normalized.title) throw new Error("A series title is required.");
     this.assertUniqueSeries(normalized, existing);
+    normalized.lateDubNotices = planLateDubNotices(normalized,
+      { languageTracks: normalized.languageTracks, previousLanguageTracks: existing?.languageTracks },
+      this.getSettings(), options.now || DateTime.now());
     const source = cleanString(options.source) || "manual";
 
     if (existing) {

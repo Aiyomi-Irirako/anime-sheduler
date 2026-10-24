@@ -116,6 +116,14 @@ The default release description distinguishes new original episodes, dub episode
 
 After an automatic post, only the release that was posted is advanced. Main episodes and language versions are tracked separately.
 
+### Late Dub Notices
+
+When a successful LiveChart sync or a saved entry first lists an enabled dub at episode 2 or later, and that language has no previous release post, the bot queues one extra `Late dub update`. It shows the next listed episode and its date; it does not invent a release date or claim availability for earlier episodes. This also applies to newly imported LiveChart entries and existing entries whose undated episode 1 was replaced by a later episode.
+
+If LiveChart still provides an exact, applicable and confirmed episode-1 date from the last 14 days, older than the regular six-hour posting window, the notice can show that original date instead. Explicit manual premiere dates support the same catch-up. Undated, regional-warning, unconfirmed expired and older premiere rows do not create an exact catch-up notice. The ordinary release posting window remains unchanged.
+
+Late notices never advance the saved next episode or date. Moving an already known episode to a different date does not create a new introduction, and a regular dub post suppresses a redundant one. Successful delivery is saved per channel and included in backups, so failed channels alone are retried and restarts do not repeat the notice. There is at most one late introduction per series and language. Disabled series or language tracks do not post, and the automatic-post settings and test-server lock apply. Backup restore alone does not generate notices: a fresh source sync or save must recognize the late entry first. Late notices do not ping release roles.
+
 Completed series remain in the `Finished` archive while their completion reminder is open. Manage confirmations separately in `Completion`: check `Completion handled` and click `Save` when you have handled a series. Open entries are protected from automatic deletion. After confirmation, entries remain for at least one more month; a later change to the total episode count can extend this period. Entries already deleted by an older version require a backup to restore.
 
 ### Completion Notices

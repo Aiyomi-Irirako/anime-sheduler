@@ -9,6 +9,7 @@ import { getNextRelease, getNextLanguageRelease, isUnpostedFinalMainRelease, isU
   shouldDeleteFinishedSeries } from "./schedule.js";
 import { scheduleDateFields } from "./livechartCatalog.js";
 import { normalizeDailyTime } from "./utils.js";
+import { planLateDubNotices } from "./lateDub.js";
 
 const WEEKDAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const controllers = new WeakMap();
@@ -87,7 +88,8 @@ function hasChanged(series, patch) {
     "languageTracks",
     "releaseDay",
     "releaseTime",
-    "nextDate"
+    "nextDate",
+    "lateDubNotices"
   ];
 
   return keys.some((key) => {
@@ -134,6 +136,23 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
     liveLanguageTracks,
     series.liveChartImportLanguage ? [series.liveChartImportLanguage] : settings.enabledLanguageCodes || []
   );
+  // A newly listed premiere can arrive after the original version finished.
+  // Keep its known episode pending, without inventing a next date or rhythm.
+  const sourceNotices = planLateDubNotices({ ...series,
+    enabled: series.enabled || series.status === "finished", languageTracks },
+  { ...live, languageTracks: liveLanguageTracks, previousLanguageTracks: current.languageTracks }, settings, now);
+  for (const notice of sourceNotices) {
+    if (notice.kind !== "release" || notice.notifiedAt ||
+        (series.lateDubNotices || []).some((item) => item.languageCode === notice.languageCode)) continue;
+    const index = languageTracks.findIndex((track) => track.code === notice.languageCode);
+    if (index !== -1 && Number.isFinite(languageTracks[index].nextEpisode)) continue;
+    const placeholder = { ...(index === -1 ? {} : languageTracks[index]),
+      code: notice.languageCode, enabled: true, available: true,
+      nextEpisode: notice.episode, episodeBatchSize: notice.episodeEnd - notice.episode + 1,
+      nextDate: "", releaseDay: "", releaseTime: "", source: "livechart" };
+    if (index === -1) languageTracks.push(placeholder);
+    else languageTracks[index] = placeholder;
+  }
   const pendingFinal = live.mainFinished && isUnpostedFinalMainRelease(
     { ...series, episodeCount },
     getNextRelease({ ...series, episodeCount }, settings, now),
@@ -165,6 +184,7 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
     nextDate: mainFinished && overwriteSchedule ? "" : liveMainSchedule.nextDate ?? series.nextDate,
     imageUrl: overwriteSchedule && live.imageUrl ? live.imageUrl : series.imageUrl || live.imageUrl,
     languageTracks,
+    lateDubNotices: current.lateDubNotices,
     completionAcknowledged: current.completionAcknowledged,
     completionAcknowledgedAt: current.completionAcknowledgedAt,
     completionNotificationCycleAt: current.completionNotificationCycleAt,
@@ -172,12 +192,15 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
     completionNotifiedChannelIds: current.completionNotifiedChannelIds,
     lastLiveChartCheckedAt: now.toISO()
   };
+  patch.lateDubNotices = planLateDubNotices(patch,
+    { ...live, languageTracks: liveLanguageTracks, previousLanguageTracks: current.languageTracks }, settings, now);
 
   if (!hasChanged(series, patch)) {
     return { changed: false, live };
   }
 
   const updated = await store.upsertSeries(patch, {
+    now,
     source: options.source || (overwriteSchedule ? "pre-post-livechart-sync" : "livechart-sync")
   });
   return { changed: true, live, updated };

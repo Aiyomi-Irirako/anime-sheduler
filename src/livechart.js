@@ -4,6 +4,7 @@ import { selectScheduleRows, isUpcomingSchedule } from "./livechartCatalog.js";
 import { fetchLiveChartHtml, liveChartId } from "./livechartHttp.js";
 import { RELEASE_POST_EXPIRY_HOURS } from "./schedule.js";
 import { MAX_EPISODE_BATCH_SIZE } from "./constants.js";
+import { LATE_DUB_LOOKBACK_DAYS } from "./lateDub.js";
 import { DateTime } from "luxon";
 import { load } from "cheerio";
 
@@ -309,6 +310,18 @@ export function parseLiveChartEpisodes(html, options = {}) {
   }
 
   const languageTracks = [...languageByCode.values()].map(({ timestamp, ...track }) => track);
+  // Keep explicit late premiere evidence separate from the next release schedule.
+  // It must never revive an expired weekly dub date or overwrite a future episode.
+  const lateDubReleases = rows.filter((row) => row.isDub && !row.isReleased && !row.requiresConfirmation &&
+    row.episode === 1 && row.timestamp !== Number.MAX_SAFE_INTEGER &&
+    row.timestamp < nowTimestamp - RELEASE_POST_EXPIRY_HOURS * 3600 &&
+    row.timestamp >= nowTimestamp - LATE_DUB_LOOKBACK_DAYS * 24 * 3600)
+    .flatMap((row) => row.audioCodes.filter((code) => code !== "ja").map((languageCode) => ({
+      languageCode, episode: 1,
+      episodeEnd: episodeBatchSize(rows, row, (entry) => entry.isDub && !entry.isReleased &&
+        !entry.requiresConfirmation && entry.audioCodes.includes(languageCode)),
+      releaseAt: DateTime.fromSeconds(row.timestamp, { zone: "utc" }).toISO()
+    })));
   const finishedLanguageCodes = [...new Set(rows.filter(row => row.isDub && row.isReleased)
     .flatMap(row => row.audioCodes))].filter(code => !rows.some(row =>
       row.isDub && !row.isReleased && row.audioCodes.includes(code)));
@@ -347,6 +360,7 @@ export function parseLiveChartEpisodes(html, options = {}) {
     mainUnavailable: Boolean(options.requirePreferredLanguage && preferredCodes.length && !preferredMainRows.length),
     dubNextEpisode: germanDub?.nextEpisode ?? null,
     languageTracks,
+    lateDubReleases,
     unscheduledLanguageTracks,
     finishedLanguageCodes,
     service: mergeServices(serviceRows),
