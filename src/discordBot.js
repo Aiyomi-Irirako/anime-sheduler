@@ -302,6 +302,34 @@ export function buildAnnouncement(series, release, settings) {
   return { embeds: [embed], allowedMentions: { parse: [] } };
 }
 
+export function buildLateDubAnnouncement(series, notice, settings = {}, now = DateTime.now()) {
+  const scheduleNotice = notice.kind === "schedule";
+  const date = DateTime.fromISO(scheduleNotice ? notice.nextReleaseAt : notice.releaseAt,
+    { zone: settings.timeZone || "Europe/Berlin" });
+  const episode = scheduleNotice ? notice.nextEpisode : notice.episode;
+  const episodeEnd = scheduleNotice ? episode : notice.episodeEnd || episode;
+  const label = languageLabel(notice.languageCode);
+  const release = {
+    kind: "language", type: "late-language", languageCode: notice.languageCode, languageLabel: label,
+    episode, episodeEnd, episodeBatchSize: Math.max(1, episodeEnd - episode + 1),
+    date: date.startOf("day"), dateTime: date, missingTime: false
+  };
+  const message = buildAnnouncement(series, release, settings);
+  const embed = message.embeds[0];
+  embed.setTitle(truncate(`Late dub update: ${series.title}`, 256))
+    .setDescription(scheduleNotice
+      ? `The ${label} dub was added with Episode ${episode} as its next listed release. No dates or availability are assumed for earlier episodes.`
+      : `Late announcement: this ${label} dub release was listed after its scheduled time. The original release date is shown below.`)
+    .setTimestamp(now.toJSDate());
+  if (scheduleNotice) {
+    embed.setFields(embed.data.fields.map((field) => ({ ...field,
+      name: field.name.startsWith("Date") ? "Next listed date" : field.name.startsWith("Time") ? "Next listed time"
+        : field.name.startsWith("Episode") ? "Next listed episode" : field.name
+    })));
+  }
+  return message;
+}
+
 export function buildCompletionAnnouncement(series, settings = {}, now = DateTime.now()) {
   const scheduleUrl = normalizeHttpUrl(series.scheduleLink);
   const imageUrl = normalizeHttpUrl(series.imageUrl);
