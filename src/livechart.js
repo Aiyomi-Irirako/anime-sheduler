@@ -87,6 +87,10 @@ function pageText(html) {
 }
 
 function parseLiveChartEpisodeCount(html) {
+  const $ = load(html);
+  const total = $('[data-viewing-progression-total-count-value]').first()
+    .attr('data-viewing-progression-total-count-value');
+  if (/^\d+$/.test(total || '') && Number(total) > 0 && Number.isSafeInteger(Number(total))) return Number(total);
   const text = pageText(html);
   const match = text.match(/\bEpisodes\s+(?:\d+\s*\/\s*)?(\d{1,4})\b/i);
   if (!match) return null;
@@ -101,7 +105,10 @@ export function parseLiveChartMetadata(html, animeUrl) {
   const premiereLabel = $('*').filter((_, element) => $(element).children().length === 0 &&
     $(element).text().trim() === 'Premiere').first();
   const premiereText = premiereLabel.parent().text().replace(/^\s*Premiere\s*/, '').trim();
-  const premiere = DateTime.fromFormat(premiereText, 'MMM d, yyyy', { locale: 'en' });
+  const premiereTime = premiereLabel.parent().find('time[datetime]').first().attr('datetime') || '';
+  const isoPremiere = DateTime.fromISO(premiereTime, { zone: 'utc' });
+  const premiere = isoPremiere.isValid ? isoPremiere
+    : DateTime.fromFormat(premiereText, 'MMM d, yyyy', { locale: 'en' });
   return { title: parseLiveChartTitle(html), imageUrl: parseLiveChartImage(html, animeUrl),
     episodeCount: parseLiveChartEpisodeCount(html), malId: malLink.match(/\/anime\/(\d+)/)?.[1] || '',
     premiereDate: premiere.isValid ? premiere.toISODate() : '' };
