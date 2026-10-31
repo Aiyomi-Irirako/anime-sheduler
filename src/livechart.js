@@ -86,17 +86,55 @@ function pageText(html) {
   ).replace(/\s+/g, " ").trim();
 }
 
-function parseLiveChartEpisodeCount(html) {
+function parseLiveChartEpisodeCount(html, animeUrl) {
   const $ = load(html);
-  const total = $('[data-viewing-progression-total-count-value]').first()
-    .attr('data-viewing-progression-total-count-value');
-  if (/^\d+$/.test(total || '') && Number(total) > 0 && Number.isSafeInteger(Number(total))) return Number(total);
-  const text = pageText(html);
-  const match = text.match(/\bEpisodes\s+(?:\d+\s*\/\s*)?(\d{1,4})\b/i);
-  if (!match) return null;
+  const animeId = liveChartId(animeUrl);
+  const positiveCount = (value) => /^\d+$/.test(value || '') && Number(value) > 0 &&
+    Number.isSafeInteger(Number(value)) ? Number(value) : null;
+  const ownWidget = $('[data-anime-details-target~="viewingProgression"], [data-viewing-progression-anime-id]')
+    .filter((_, element) => {
+      const node = $(element);
+      const id = node.attr('data-viewing-progression-anime-id');
+      const detailId = node.closest('[data-controller~="anime-details"]').attr('data-anime-details-id');
+      if (animeId && detailId && detailId !== animeId) return false;
+      return id ? id === animeId : node.is('[data-anime-details-target~="viewingProgression"]');
+    }).first();
+  if (ownWidget.length) {
+    const total = ownWidget.attr('data-viewing-progression-total-count-value');
+    const episodeCount = positiveCount(total);
+    // An absent total on the detail widget means LiveChart has not announced it.
+    // Related titles can still have their own totals elsewhere on the same page.
+    return { episodeCount, episodeCountKnown: episodeCount !== null || total === undefined };
+  }
 
-  const count = Number.parseInt(match[1], 10);
-  return Number.isFinite(count) && count > 0 ? count : null;
+  // Older pages expose an Episodes field without a progression component.
+  // Read that field alone; never search recommendation cards or the whole page.
+  const detail = $('[data-controller~="anime-details"]').filter((_, element) =>
+    !animeId || $(element).attr('data-anime-details-id') === animeId).first();
+  const scope = detail.length ? detail : $.root();
+  const fields = scope.find('*').filter((_, element) => {
+    const node = $(element);
+    const detailId = node.closest('[data-controller~="anime-details"]').attr('data-anime-details-id');
+    return (!animeId || !detailId || detailId === animeId) && !node.children().length &&
+      !node.closest('script, style, article[data-anime-id], article[data-anime-item-id]').length &&
+      /^Episodes(?:\s|$)/i.test(node.text().trim());
+  });
+  for (const element of fields) {
+    const field = $(element);
+    const container = /^Episodes$/i.test(field.text().trim()) ? field.parent() : field;
+    const widget = container.find('[data-viewing-progression-total-count-value]').filter((_, element) =>
+      !$(element).attr('data-viewing-progression-anime-id') ||
+      $(element).attr('data-viewing-progression-anime-id') === animeId).first();
+    if (widget.length) {
+      const episodeCount = positiveCount(widget.attr('data-viewing-progression-total-count-value'));
+      return { episodeCount, episodeCountKnown: episodeCount !== null };
+    }
+    const value = pageText($.html(container));
+    const match = value.match(/^Episodes\s+(?:\d+\s*\/\s*)?(\d+)(?![\d.])\b/i);
+    const episodeCount = positiveCount(match?.[1]);
+    if (episodeCount !== null) return { episodeCount, episodeCountKnown: true };
+  }
+  return { episodeCount: null, episodeCountKnown: false };
 }
 
 export function parseLiveChartMetadata(html, animeUrl) {
@@ -110,7 +148,7 @@ export function parseLiveChartMetadata(html, animeUrl) {
   const premiere = isoPremiere.isValid ? isoPremiere
     : DateTime.fromFormat(premiereText, 'MMM d, yyyy', { locale: 'en' });
   return { title: parseLiveChartTitle(html), imageUrl: parseLiveChartImage(html, animeUrl),
-    episodeCount: parseLiveChartEpisodeCount(html), malId: malLink.match(/\/anime\/(\d+)/)?.[1] || '',
+    ...parseLiveChartEpisodeCount(html, animeUrl), malId: malLink.match(/\/anime\/(\d+)/)?.[1] || '',
     premiereDate: premiere.isValid ? premiere.toISODate() : '' };
 }
 
@@ -383,7 +421,7 @@ async function fetchLiveChartDetails(scheduleLink, fetchHtml = fetchLiveChartHtm
   const html = await fetchHtml(animeUrl, { ttlMs: 24 * 3600000 });
   return {
     imageUrl: parseLiveChartImage(html, animeUrl),
-    episodeCount: parseLiveChartEpisodeCount(html)
+    ...parseLiveChartEpisodeCount(html, animeUrl)
   };
 }
 

@@ -7,6 +7,7 @@ import { MAX_EPISODE_BATCH_SIZE, WEEKDAYS } from './constants.js';
 const text = (node) => node.text().replace(/\s+/g, ' ').trim();
 const unique = (values) => [...new Set(values.filter(Boolean))];
 const positive = (value) => /^\d+$/.test(String(value || '')) && Number(value) > 0 ? Number(value) : null;
+const SCHEDULE_CATEGORY = /^(?:Broadcast|Streaming|Simulcast|Theaters|Digital Rental|Blu-ray|DVD|Event Screening)(?:\s*\([^)]*\))?(?::\s*.+)?$/i;
 
 export function parseSeasonCatalog(html, season) {
   const $ = load(html);
@@ -43,7 +44,10 @@ export function parseScheduleRows(html) {
   return $('article').map((_, element) => {
     const article = $(element);
     const header = article.children('a').first();
-    const type = article.find('[title]').filter((_, e) => /\b(?:dub(?:bed)?|sub(?:bed|titled))\b|broadcast\s*\(japan\)/i.test($(e).attr('title') || '')).first();
+    const type = article.find('[title]').filter((_, e) => {
+      const value = $(e).attr('title') || '';
+      return SCHEDULE_CATEGORY.test(value) || /\b(?:dub(?:bed)?|sub(?:bed|titled))\b|broadcast\s*\(japan\)/i.test(value);
+    }).first();
     const title = type.attr('title') || '';
     const hasScheduleIdentity = article.is('[data-release-schedule-release-schedule-id], [data-controller~="release-schedule"]') ||
       /\/schedules\/\d+(?:\/|$|[?#])/.test(header.attr('href') || '');
@@ -84,6 +88,8 @@ export function parseScheduleRows(html) {
     const isDub = /\bdub(?:bed)?\b/i.test(title);
     const isSubbed = /\bsub(?:bed|titled)\b/i.test(title);
     const isBroadcastJapan = /broadcast\s*\(japan\)/i.test(title);
+    const isOtherSchedule = SCHEDULE_CATEGORY.test(title) && !isDub && !isSubbed && !isBroadcastJapan;
+    if (isOtherSchedule && !hasScheduleIdentity) return null;
     languageDataReadable = languageDataReadable &&
       (!isSubbed || unique([...subtitles, ...legacy]).length > 0) &&
       (!isDub || unique([...audio, ...legacy]).length > 0);
@@ -101,8 +107,8 @@ export function parseScheduleRows(html) {
       audioCodes: unique(audio.length ? audio : isDub ? legacy : []),
       subtitleCodes: unique(subtitles.length ? subtitles : isSubbed ? legacy : []),
       languageCodes: unique([...audio, ...subtitles, ...legacy]), languageDataReadable, services,
-      isDub, isSubbed, isBroadcastJapan, isMain: isSubbed || isBroadcastJapan,
-      isReleased: /^Released\b/i.test(releaseText) || (!hasScheduleIdentity &&
+      isDub, isSubbed, isBroadcastJapan, isOtherSchedule, isMain: isSubbed || isBroadcastJapan,
+      isReleased: /^(?:Released\b|Release ended\b)/i.test(releaseText) || (!hasScheduleIdentity &&
         (/^Released$/i.test(directText) || visible.find('*').filter((_, e) => !$(e).children().length && /^Released$/i.test(text($(e)))).length > 0))
     };
   }).get();
@@ -111,7 +117,7 @@ export function parseScheduleRows(html) {
 export function selectScheduleRows(html, scheduleId = '') {
   const rows = parseScheduleRows(html);
   if (!rows.length) throw new Error('No LiveChart schedules could be read.');
-  if (rows.some(row => !row.isDub && !row.isMain)) {
+  if (rows.some(row => !row.isDub && !row.isMain && !row.isOtherSchedule)) {
     throw new Error('The LiveChart schedule format could not be read; previous data was kept.');
   }
   if (rows.some(row => (row.isSubbed || row.isDub) && !row.languageDataReadable)) {
