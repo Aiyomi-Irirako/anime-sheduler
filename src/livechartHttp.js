@@ -1,4 +1,13 @@
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const TRANSIENT_NETWORK_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET']);
+
+function isTransientNetworkError(error) {
+  if (error.status) return false;
+  const code = error.cause?.code || error.code;
+  return code ? TRANSIENT_NETWORK_CODES.has(code) : error.name === 'TimeoutError' ||
+    (error instanceof TypeError && error.message === 'fetch failed' && !error.cause);
+}
 
 export function liveChartId(value) {
   try {
@@ -32,12 +41,23 @@ export function createLiveChartClient({ fetchImpl = (...args) => fetch(...args),
         error.status = 429;
         throw error;
       }
-      if (lastRequest !== null) await wait(Math.max(0, delayMs - (now() - lastRequest)));
-      lastRequest = now();
-      const response = await fetchImpl(key, {
-        headers: { 'user-agent': 'AnimeSheduler/1.7 (LiveChart schedule reader)' },
-        signal: AbortSignal.timeout(30000), redirect: 'error'
-      });
+      let response;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (lastRequest !== null) await wait(Math.max(0, delayMs - (now() - lastRequest)));
+        lastRequest = now();
+        try {
+          response = await fetchImpl(key, {
+            headers: { 'user-agent': 'AnimeSheduler/1.7 (LiveChart schedule reader)' },
+            signal: AbortSignal.timeout(30000), redirect: 'error'
+          });
+          break;
+        } catch (error) {
+          if (!isTransientNetworkError(error)) throw error;
+          if (attempt === 0) continue;
+          const code = error.cause?.code || error.code;
+          throw new Error(`LiveChart request failed after one retry: ${error.message}${code ? ` (${code})` : ''}`, { cause: error });
+        }
+      }
       if (!response.ok) {
         if ([403, 429].includes(response.status)) {
           const retry = response.headers.get('retry-after');

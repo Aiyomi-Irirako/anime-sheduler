@@ -60,6 +60,8 @@ Expected output:
 - Keep a backup before importing or restoring data. A corrected sync uses the current LiveChart schedule; it does not send announcements for every historical episode missed during the outage.
 - Version `1.9.3` also recognizes local streaming, cinema and physical-media schedule categories without letting unrelated entries block valid German streaming dates. Future categories that cannot be read still fail safely.
 - If `1.9.2` copied a total episode count from a related title, update to `1.9.3` and sync again. Counts now come from the current anime's own Episodes field. When that field explicitly has no announced total, a followed LiveChart entry returns to an unknown total instead of retaining the unrelated number. A failed detail-page read preserves the saved total; manual schedules are unchanged.
+- Version `1.9.4` also ignores inapplicable regional rows during parser validation and recognizes combined Blu-ray/DVD and home-video categories. Incomplete language data on an applicable schedule still fails safely. A transient connection failure is retried once with the normal request delay; access denials, challenges and rate limits retain their existing pause.
+- If the original series is finished but a dub remains open without a date, sync again with `1.9.4` or later. An explicit applicable `Released` source closes the language track and can create a one-time completion catch-up for missing announcements. An absent or paused dub does not close automatically.
 
 ## Security Notes
 

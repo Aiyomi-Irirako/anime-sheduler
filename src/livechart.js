@@ -367,7 +367,7 @@ export function parseLiveChartEpisodes(html, options = {}) {
         !entry.requiresConfirmation && entry.audioCodes.includes(languageCode)),
       releaseAt: DateTime.fromSeconds(row.timestamp, { zone: "utc" }).toISO()
     })));
-  const finishedLanguageCodes = [...new Set(rows.filter(row => row.isDub && row.isReleased)
+  const finishedLanguageCodes = [...new Set(rows.filter(row => row.isDub && row.isReleased && !/^Release ended\b/i.test(row.dateLabel))
     .flatMap(row => row.audioCodes))].filter(code => !rows.some(row =>
       row.isDub && !row.isReleased && row.audioCodes.includes(code)));
   // A successful source read with no usable next dub must cancel a locally

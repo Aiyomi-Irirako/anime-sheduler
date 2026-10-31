@@ -7,7 +7,7 @@ import { MAX_EPISODE_BATCH_SIZE, WEEKDAYS } from './constants.js';
 const text = (node) => node.text().replace(/\s+/g, ' ').trim();
 const unique = (values) => [...new Set(values.filter(Boolean))];
 const positive = (value) => /^\d+$/.test(String(value || '')) && Number(value) > 0 ? Number(value) : null;
-const SCHEDULE_CATEGORY = /^(?:Broadcast|Streaming|Simulcast|Theaters|Digital Rental|Blu-ray|DVD|Event Screening)(?:\s*\([^)]*\))?(?::\s*.+)?$/i;
+const SCHEDULE_CATEGORY = /^(?:Broadcast|Streaming|Simulcast|Theaters|Digital Rental|Blu-ray(?:\/DVD)?|DVD|Home Video|Event Screening)(?:\s*\([^)]*\))?(?::\s*.+)?$/i;
 
 export function parseSeasonCatalog(html, season) {
   const $ = load(html);
@@ -117,10 +117,11 @@ export function parseScheduleRows(html) {
 export function selectScheduleRows(html, scheduleId = '') {
   const rows = parseScheduleRows(html);
   if (!rows.length) throw new Error('No LiveChart schedules could be read.');
-  if (rows.some(row => !row.isDub && !row.isMain && !row.isOtherSchedule)) {
+  // Regional entries cannot supply our schedule and must not block readable rows.
+  if (rows.some(row => !row.regionWarning && !row.isDub && !row.isMain && !row.isOtherSchedule)) {
     throw new Error('The LiveChart schedule format could not be read; previous data was kept.');
   }
-  if (rows.some(row => (row.isSubbed || row.isDub) && !row.languageDataReadable)) {
+  if (rows.some(row => !row.regionWarning && (row.isSubbed || row.isDub) && !row.languageDataReadable)) {
     throw new Error('The LiveChart schedule languages could not be read; previous data was kept.');
   }
   if (!scheduleId) return rows;

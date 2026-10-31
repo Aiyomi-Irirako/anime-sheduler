@@ -330,6 +330,33 @@ export function buildLateDubAnnouncement(series, notice, settings = {}, now = Da
   return message;
 }
 
+export function buildReleaseCompletionAnnouncement(series, notice, settings = {}, now = DateTime.now()) {
+  const label = languageLabel(notice.languageCode);
+  const range = Number.isFinite(notice.episodeStart) && Number.isFinite(notice.episodeEnd)
+    ? formatEpisodeEntries(series, { kind: "language", languageCode: notice.languageCode,
+      languageLabel: label, episode: notice.episodeStart, episodeEnd: notice.episodeEnd })[0]?.text
+    : "Episode range unknown";
+  const embed = new EmbedBuilder()
+    .setColor(0x8bb4ff)
+    .setTitle(truncate(`Completion catch-up: ${series.title}`, 256))
+    .setDescription(`LiveChart confirms that this ${label} release has finished. This is a late update for releases without a saved announcement. Historical release dates are not available.`)
+    .addFields(
+      { name: "Version", value: label || "Unknown", inline: true },
+      { name: "Service", value: truncate(pickPreferredService(series.service, series.preferredService) || "Unknown", 1024), inline: true },
+      { name: "Catch-up episodes", value: range || "Episode range unknown", inline: false },
+      { name: "Last tracked announcement", value: notice.previousEpisode === 0 ? "None recorded"
+        : Number.isFinite(notice.previousEpisode) ? `Episode ${notice.previousEpisode}` : "Episode unknown", inline: false },
+      { name: COPY_TITLE_FIELD_NAME, value: copyFieldValue(copyableSeriesTitle(series.title)), inline: false }
+    ).setTimestamp(now.toJSDate());
+  const scheduleUrl = normalizeHttpUrl(series.scheduleLink);
+  const imageUrl = normalizeHttpUrl(series.imageUrl);
+  if (scheduleUrl) embed.setURL(scheduleUrl);
+  if (imageUrl) embed.setThumbnail(imageUrl);
+  if (cleanString(series.streamingServiceId)) embed.addFields({ name: "Service ID", value: copyFieldValue(series.streamingServiceId), inline: false });
+  if (cleanString(series.tvdbId)) embed.addFields({ name: "TVDB ID", value: copyFieldValue(series.tvdbId), inline: false });
+  return { embeds: [embed], allowedMentions: { parse: [] } };
+}
+
 export function buildCompletionAnnouncement(series, settings = {}, now = DateTime.now()) {
   const scheduleUrl = normalizeHttpUrl(series.scheduleLink);
   const imageUrl = normalizeHttpUrl(series.imageUrl);

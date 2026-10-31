@@ -13,7 +13,7 @@ import {
   shouldPostRelease,
   shouldNotifyCompletion
 } from "./schedule.js";
-import { buildAnnouncement, buildCompletionAnnouncement, buildCompletionDigestAnnouncement, buildLateDubAnnouncement, releaseMentionRoleIds } from "./discordBot.js";
+import { buildAnnouncement, buildCompletionAnnouncement, buildCompletionDigestAnnouncement, buildLateDubAnnouncement, buildReleaseCompletionAnnouncement, releaseMentionRoleIds } from "./discordBot.js";
 import { enabledLanguageTracks, languageLabel, normalizeEnabledLanguageCodes } from "./languages.js";
 import { isLiveChartLink, syncOneSeriesFromLiveChart } from "./livechartSync.js";
 import { cleanString } from "./utils.js";
@@ -307,7 +307,66 @@ export async function checkDueAnnouncements(store, discord, options = {}) {
   }
 
   const late = await checkLateDubAnnouncements(store, discord, { now });
-  return { posted: posted + late.posted, skipped: skipped + late.failed, ...(late.reason ? { reason: late.reason } : {}) };
+  const completed = await checkReleaseCompletionAnnouncements(store, discord, { now });
+  return { posted: posted + late.posted + completed.posted, skipped: skipped + late.failed + completed.failed,
+    ...(completed.reason || late.reason ? { reason: completed.reason || late.reason } : {}) };
+}
+
+export async function checkReleaseCompletionAnnouncements(store, discord, options = {}) {
+  if (!discord.enabled || !discord.ready) return { posted: 0, failed: 0, reason: "discord_not_ready" };
+  const settings = store.getSettings?.() || store.snapshot().settings;
+  if (!automaticPostsEnabled(settings)) return { posted: 0, failed: 0, reason: "automatic_posts_disabled" };
+  const now = options.now || DateTime.now();
+  let posted = 0;
+  let failed = 0;
+  for (const entry of [...(store.listSeries?.() || store.snapshot().series)]) {
+    for (const saved of entry.releaseCompletionNotices || []) {
+      const currentSettings = store.getSettings?.() || settings;
+      if (!automaticPostsEnabled(currentSettings)) return { posted, failed, reason: "automatic_posts_disabled" };
+      const series = store.getSeries(entry.id);
+      const notice = series?.releaseCompletionNotices?.find(item => item.key === saved.key);
+      if (!series || !notice || notice.notifiedAt || series.completionAcknowledged ||
+          (!series.enabled && !isSeriesComplete(series))) continue;
+      const track = series.languageTracks?.find(item => item.code === notice.languageCode);
+      if (!track || Number.isFinite(track.nextEpisode)) continue;
+      if (series.liveChartImportLanguage && series.liveChartImportLanguage !== notice.languageCode) continue;
+      // A queued catch-up can outlive a reopened schedule and its normal post.
+      // Suppress it only if that post covers the whole missing range; a later
+      // single finale must not hide earlier missing episodes. Finish partial deliveries.
+      const postedRange = cleanString(track.lastPostedKey).match(/:language:[^:]+:(\d+)(?:-(\d+))?:/);
+      if (!notice.sentChannelIds.length && postedRange && Number.isFinite(notice.episodeStart) &&
+          Number(postedRange[1]) <= notice.episodeStart &&
+          Number(postedRange[2] || postedRange[1]) >= notice.episodeEnd) continue;
+      const detectedAt = DateTime.fromISO(notice.detectedAt);
+      if (!detectedAt.isValid || now < detectedAt) continue;
+      const message = buildReleaseCompletionAnnouncement(series, notice, currentSettings, now);
+      let result;
+      try {
+        result = await discord.post(message, undefined, { excludeChannelIds: notice.sentChannelIds });
+      } catch (error) {
+        console.warn(`Release completion catch-up failed for "${series.title}": ${error.message}`);
+        failed += 1;
+        continue;
+      }
+      const allSent = !result.failed.length;
+      if (result.sent.length) posted += 1;
+      if (!allSent) failed += 1;
+      const current = store.getSeries(series.id);
+      const currentNotice = current?.releaseCompletionNotices?.find(item => item.key === notice.key);
+      if (!currentNotice || JSON.stringify(currentNotice) !== JSON.stringify(notice)) continue;
+      await store.replaceSeries(current.id, { ...current,
+        releaseCompletionNotices: current.releaseCompletionNotices.map(item => item.key === notice.key ? {
+          ...item, notifiedAt: allSent ? now.toISO() : "",
+          sentChannelIds: [...new Set([...item.sentChannelIds, ...result.sent.map(sent => sent.channelId)])]
+        } : item)
+      }, { source: "scheduler-release-completed" });
+      if (result.sent.length) await store.addPostLog({ type: "auto-release-completion-catchup",
+        seriesId: current.id, title: current.title, languageCode: notice.languageCode,
+        episode: notice.episodeStart, episodeEnd: notice.episodeEnd, detectedAt: notice.detectedAt,
+        channelIds: result.sent.map(sent => sent.channelId), message });
+    }
+  }
+  return { posted, failed };
 }
 
 export async function checkLateDubAnnouncements(store, discord, options = {}) {

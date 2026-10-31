@@ -92,7 +92,7 @@ test('a truly unknown release category preserves previously saved dates', async 
     enabled: true, status: 'airing', nextEpisode: 6, nextDate: '2026-11-02', releaseTime: '14:00',
     liveChartLanguageStrict: true, languageTracks: [] });
   const before = structuredClone(store.getSeries(example.id));
-  const html = knownLocalRow('A new unrecognized schedule kind', 1) + validGermanRow(example);
+  const html = knownLocalRow('A new unrecognized schedule kind', 1, { regional: false }) + validGermanRow(example);
   await assert.rejects(syncOneSeriesFromLiveChart(store, before, {
     now, overwriteSchedule: true, fetchEpisodes: async (_, options) => parseLiveChartEpisodes(html, options)
   }), /schedule format could not be read/);
