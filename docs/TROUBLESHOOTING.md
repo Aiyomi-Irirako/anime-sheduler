@@ -52,6 +52,13 @@ Expected output:
 - The Discord bot must be logged in.
 - The configured Discord channel must be valid.
 
+## LiveChart Stops Supplying Dates or New Titles
+
+- LiveChart changed its schedule, language-list and season-card markup on October 31, 2026. Versions through `1.9.1` can stop finding season titles and clear German release dates during sync. Update to `1.9.2` or later, then run `Sync LiveChart now` to read the current dates again. The new-series check can be started separately in Settings, subject to its normal cooldown.
+- The reader supports both the previous and current page structures. Pages without recognizable schedules fail the sync instead of replacing saved releases with empty data.
+- A successfully read source can still have an undated or paused release. Such entries stay without a date; the scheduler does not invent a weekly date to fill the gap.
+- Keep a backup before importing or restoring data. A corrected sync uses the current LiveChart schedule; it does not send announcements for every historical episode missed during the outage.
+
 ## Security Notes
 
 - Never commit `.env` or `/etc/anime-sheduler.env`.

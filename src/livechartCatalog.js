@@ -11,19 +11,25 @@ const positive = (value) => /^\d+$/.test(String(value || '')) && Number(value) >
 export function parseSeasonCatalog(html, season) {
   const $ = load(html);
   const items = new Map();
-  $('article[data-anime-id]').each((_, element) => {
+  $('article[data-anime-id], article[data-anime-item-id]').each((_, element) => {
     const item = $(element);
-    const id = item.attr('data-anime-id');
-    const title = item.attr('data-english') || item.attr('data-romaji');
+    const id = item.attr('data-anime-id') || item.attr('data-anime-item-id');
+    const title = item.attr('data-english') || item.attr('data-anime-item-english-title') ||
+      item.attr('data-romaji') || item.attr('data-anime-item-romanized-native-title') ||
+      text(item.find('[data-anime-item-target~="preferredTitle"]').first());
     if (!/^\d+$/.test(id || '') || !title) return;
-    const count = text(item.find('.anime-episodes')).match(/^(\d+)\s+eps?\b/i);
+    const metadata = item.find('.anime-episodes, .lc-anime-details-card__metadata').map((_, e) => {
+      const node = $(e);
+      return node.children().length ? node.children().map((_, child) => text($(child))).get().join(' ') : text(node);
+    }).get().join(' ');
+    const count = metadata.match(/\b(\d+)\s+eps?\b/i);
     const malLink = item.find('a[href*="myanimelist.net/anime/"]').first().attr('href') || '';
     const poster = item.find('img').map((_, e) => $(e).attr('src') || $(e).attr('data-src')).get()
       .find((url) => url?.includes('/poster_image/')) || '';
     items.set(id, {
       id, title, seasons: [season], episodeCount: count ? positive(count[1]) : null,
       malId: malLink.match(/\/anime\/(\d+)/)?.[1] || '', imageUrl: poster.startsWith('https://') ? poster : '',
-      premiereLabel: text(item.find('.anime-date')), services: [],
+      premiereLabel: text(item.find('.anime-date, .lc-anime-details-card__premiere')), services: [],
       scheduleLink: `https://www.livechart.me/anime/${id}/schedules`
     });
   });
@@ -37,30 +43,50 @@ export function parseScheduleRows(html) {
   return $('article').map((_, element) => {
     const article = $(element);
     const header = article.children('a').first();
-    const title = article.find('a[title]').first().attr('title') || '';
-    const content = text(article);
-    const releaseText = header.length ? text(header) : content;
+    const type = article.find('[title]').filter((_, e) => /\b(?:dub(?:bed)?|sub(?:bed|titled))\b|broadcast\s*\(japan\)/i.test($(e).attr('title') || '')).first();
+    const title = type.attr('title') || '';
+    const hasScheduleIdentity = article.is('[data-release-schedule-release-schedule-id], [data-controller~="release-schedule"]') ||
+      /\/schedules\/\d+(?:\/|$|[?#])/.test(header.attr('href') || '');
+    if (!title && !hasScheduleIdentity) return null;
+    const visible = article.clone();
+    visible.find('[popover], [hidden], menu, script, style').remove();
+    const content = text(visible);
+    const directText = visible.contents().filter((_, node) => node.type === 'text').text().trim();
+    const countdown = article.find('[data-label], [data-timestamp], [data-intl-time-datetime], [data-formatted-temporal-precision]').first();
+    let heading = countdown;
+    while (heading.length && heading.parent().length && heading.parent()[0] !== element) heading = heading.parent();
+    // Current cards use an empty interaction link followed by a separate heading.
+    const releaseText = text(header) || text(heading) || text(article.children('div').first()) || content;
     const label = article.find('[data-label]').first().attr('data-label') || releaseText;
     const batch = label.match(/\bAll\s*(\d+)\s*EPs\b/i);
     const range = label.match(/\bEP\s*(\d+)(?:\s*[-~\u2013\u2014]\s*(\d+))?/i);
     const episode = batch ? 1 : range ? positive(range[1]) : null;
     const end = batch ? positive(batch[1]) : range ? positive(range[2]) || episode : null;
     const timestamp = positive(article.find('[data-timestamp]').first().attr('data-timestamp'));
-    const partial = article.find('[data-intl-time-datetime]').first();
-    const precision = timestamp ? 4 : Number(partial.attr('data-intl-time-precision')) || null;
-    const date = partial.attr('data-intl-time-datetime') || '';
+    const partial = article.find('[data-intl-time-datetime], [data-formatted-temporal-precision]').first();
+    const precision = timestamp ? 4 : Number(partial.attr('data-intl-time-precision') || partial.attr('data-formatted-temporal-precision')) || null;
+    const date = partial.attr('data-intl-time-datetime') || partial.attr('datetime') || '';
     const audio = [], subtitles = [], legacy = [];
-    article.find('[data-tracklist-json]').each((_, e) => {
+    const tracklists = article.find('[data-tracklist-json], [data-tracklist-data], [data-release-schedule-info-target~="auralTracklist"], [data-release-schedule-info-target~="textualTracklist"]');
+    let languageDataReadable = tracklists.length > 0;
+    tracklists.each((_, e) => {
       try {
         const node = $(e);
         const icons = node.prev().find('use').map((_, icon) => $(icon).attr('href') || $(icon).attr('xlink:href')).get();
-        const target = icons.includes('#icon:audio') ? audio : icons.includes('#icon:subtitles') ? subtitles : legacy;
-        target.push(...Object.keys(JSON.parse(node.attr('data-tracklist-json'))).map(normalizeLanguageCode));
-      } catch { /* A malformed track list is not evidence of a language being available. */ }
+        const role = (node.attr('data-release-schedule-info-target') || '').split(/\s+/);
+        const target = role.includes('auralTracklist') || icons.some(icon => icon === '#icon:audio' || /^#ic-volume_up(?:--|$)/.test(icon)) ? audio :
+          role.includes('textualTracklist') || icons.some(icon => icon === '#icon:subtitles' || /^#ic-subtitles(?:--|$)/.test(icon)) ? subtitles : legacy;
+        const tracks = JSON.parse(node.attr('data-tracklist-json') || node.attr('data-tracklist-data'));
+        if (!tracks || typeof tracks !== 'object' || Array.isArray(tracks)) { languageDataReadable = false; return; }
+        target.push(...Object.keys(tracks).map(normalizeLanguageCode));
+      } catch { languageDataReadable = false; }
     });
     const isDub = /\bdub(?:bed)?\b/i.test(title);
     const isSubbed = /\bsub(?:bed|titled)\b/i.test(title);
     const isBroadcastJapan = /broadcast\s*\(japan\)/i.test(title);
+    languageDataReadable = languageDataReadable &&
+      (!isSubbed || unique([...subtitles, ...legacy]).length > 0) &&
+      (!isDub || unique([...audio, ...legacy]).length > 0);
     const services = unique(article.find('.lc-text-contextual-accent').map((_, e) => normalizeServiceName(text($(e)))).get());
     return {
       scheduleId: String(positive(article.attr('data-release-schedule-release-schedule-id')) ||
@@ -70,13 +96,14 @@ export function parseScheduleRows(html) {
       batch: Boolean(batch), timestamp: timestamp || Number.MAX_SAFE_INTEGER, precision,
       partialDate: precision === 3 && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '',
       approximateDate: date,
-      dateLabel: releaseText, requiresConfirmation: /requires confirmation/i.test(releaseText),
-      regionWarning: /might not apply to your region/i.test(releaseText),
+      dateLabel: releaseText, requiresConfirmation: /requires confirmation/i.test(content),
+      regionWarning: /might not apply to your region/i.test(content),
       audioCodes: unique(audio.length ? audio : isDub ? legacy : []),
       subtitleCodes: unique(subtitles.length ? subtitles : isSubbed ? legacy : []),
-      languageCodes: unique([...audio, ...subtitles, ...legacy]), services,
+      languageCodes: unique([...audio, ...subtitles, ...legacy]), languageDataReadable, services,
       isDub, isSubbed, isBroadcastJapan, isMain: isSubbed || isBroadcastJapan,
-      isReleased: /\bReleased/i.test(article.attr('data-release-schedule-release-schedule-id') ? releaseText : content)
+      isReleased: /^Released\b/i.test(releaseText) || (!hasScheduleIdentity &&
+        (/^Released$/i.test(directText) || visible.find('*').filter((_, e) => !$(e).children().length && /^Released$/i.test(text($(e)))).length > 0))
     };
   }).get();
 }
@@ -84,6 +111,12 @@ export function parseScheduleRows(html) {
 export function selectScheduleRows(html, scheduleId = '') {
   const rows = parseScheduleRows(html);
   if (!rows.length) throw new Error('No LiveChart schedules could be read.');
+  if (rows.some(row => !row.isDub && !row.isMain)) {
+    throw new Error('The LiveChart schedule format could not be read; previous data was kept.');
+  }
+  if (rows.some(row => (row.isSubbed || row.isDub) && !row.languageDataReadable)) {
+    throw new Error('The LiveChart schedule languages could not be read; previous data was kept.');
+  }
   if (!scheduleId) return rows;
   const selected = rows.filter(row => row.scheduleId === String(scheduleId));
   if (!selected.length) throw new Error('The selected LiveChart schedule could not be found. Check the schedule link.');
@@ -140,7 +173,9 @@ export function buildDiscoveredSeries(candidate, scheduleHtml, detailHtml, setti
   const $ = load(detailHtml);
   const premiereLabel = $('*').filter((_, e) => $(e).children().length === 0 && text($(e)) === 'Premiere').first();
   const premiereText = text(premiereLabel.parent()).replace(/^Premiere\s*/, '');
-  const premiere = DateTime.fromFormat(premiereText, 'MMM d, yyyy', { locale: 'en' });
+  const premiereIso = premiereLabel.parent().find('time[datetime]').first().attr('datetime');
+  const premiere = premiereIso ? DateTime.fromISO(premiereIso, { zone }) :
+    DateTime.fromFormat(premiereText, 'MMM d, yyyy', { locale: 'en' });
   const dateFields = scheduleDateFields(main?.episode ? main : null, zone);
   return {
     title: candidate.title, service: normalizeServiceList(services.join(',')), scheduleLink: candidate.scheduleLink,
