@@ -24,6 +24,7 @@ import { normalizePreferredService, normalizeServiceList } from "./services.js";
 import { normalizeDiscoverySeason, normalizeDiscoveryState } from "./livechartDiscovery.js";
 import { findDuplicateSeries, seriesIdentity } from "./seriesIdentity.js";
 import { normalizeLateDubNotices, planLateDubNotices } from "./lateDub.js";
+import { normalizeReleaseCompletionNotices } from "./releaseCompletion.js";
 
 function normalizeDiscordChannelIds(value) {
   const raw = Array.isArray(value) ? value : value ? [value] : [];
@@ -390,6 +391,7 @@ function normalizeSeries(input, existing = {}) {
       input.completionNotifiedChannelIds ?? existing.completionNotifiedChannelIds
     ),
     lateDubNotices: normalizeLateDubNotices(input.lateDubNotices ?? existing.lateDubNotices),
+    releaseCompletionNotices: normalizeReleaseCompletionNotices(input.releaseCompletionNotices ?? existing.releaseCompletionNotices),
     lastLiveChartCheckedAt: cleanString(input.lastLiveChartCheckedAt || existing.lastLiveChartCheckedAt),
     liveChartLanguageStrict: parseBoolean(input.liveChartLanguageStrict ?? existing.liveChartLanguageStrict),
     liveChartImportLanguage: normalizePreferredScheduleLanguage(input.liveChartImportLanguage ?? existing.liveChartImportLanguage),

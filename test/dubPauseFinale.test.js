@@ -48,7 +48,10 @@ async function setup(t, { completed = false, reminderMinutes = 0, lastPostedAt }
       lastPostedKey: completed ? finalKey : priorKey,
       lastPostedAt: lastPostedAt || releaseAt.minus({ days: 7 }).plus({ seconds: 10 }).toISO() }] });
   const messages = [];
-  const discord = { enabled: true, ready: true, async post(message) { messages.push(message.embeds[0].toJSON()); } };
+  const discord = { enabled: true, ready: true, async post(message) {
+    messages.push(message.embeds[0].toJSON());
+    return { sent: [{ channelId: '111111111111111111' }], failed: [] };
+  } };
   const sync = (html) => (targetStore, series, options) => syncOneSeriesFromLiveChart(targetStore, series, {
     ...options, fetchEpisodes: async (_, parseOptions) => parseLiveChartEpisodes(html, parseOptions)
   });
@@ -97,14 +100,19 @@ test('an absent dub row does not preserve an extrapolated finale', async t => {
   assert.equal(isSeriesComplete(getSeries()), false);
 });
 
-test('a Released dub row does not recover a finale after its posting window expires', async t => {
+test('an expired Released finale gets one completion catch-up instead of a fabricated timed release', async t => {
   const { store, discord, messages, sync, getSeries } = await setup(t);
   const syncSeries = sync(row() + row({ dub: true }));
   const now = releaseAt.plus({ hours: 6, seconds: 1 });
   await syncSeries(store, getSeries(), { now, overwriteSchedule: true });
   assert.equal(getSeries().languageTracks.find(item => item.code === 'de').nextDate, '');
+  assert.equal((await checkDueAnnouncements(store, discord, { now, syncSeries })).posted, 1);
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].title, /Completion catch-up/);
+  assert.equal(messages[0].fields.some(field => field.name.startsWith('Date')), false);
+  assert.equal(getSeries().languageTracks.find(item => item.code === 'de').lastPostedKey, priorKey);
+  assert.equal(isSeriesComplete(getSeries()), true);
   assert.equal((await checkDueAnnouncements(store, discord, { now, syncSeries })).posted, 0);
-  assert.equal(messages.length, 0);
 });
 
 test('an already posted finale is not reactivated by a Released dub row', async t => {

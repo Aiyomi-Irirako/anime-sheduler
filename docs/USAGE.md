@@ -116,6 +116,10 @@ The default release description distinguishes new original episodes, dub episode
 
 After an automatic post, only the release that was posted is advanced. Main episodes and language versions are tracked separately.
 
+An enabled language version explicitly marked `Released` by its applicable LiveChart source is completed during sync. An unposted finale within the normal six-hour window remains eligible for its ordinary post. Missing, undated or merely expired source schedules still pause the language version; a preview ending early is not evidence that every episode has been released.
+
+If the source confirms completion after the regular posting window and the tracked language still has unannounced episodes, the scheduler sends one `Completion catch-up`. A known total and numeric post history identify the missing range, such as German episodes 15–19. Otherwise the range stays unknown. The message states that original release dates are unavailable and does not invent timed episode posts. These notices preserve the regular post history, retry only failed channels, and survive restarts and backups. They follow the automatic-post/test-server guards, do not ping roles, and do not repeat once delivered or manually handled. The ordinary one-week completion notice and weekly digest remain separate.
+
 ### Late Dub Notices
 
 When a successful LiveChart sync or a saved entry first lists an enabled dub at episode 2 or later, and that language has no previous release post, the bot queues one extra `Late dub update`. It shows the next listed episode and its date; it does not invent a release date or claim availability for earlier episodes. This also applies to newly imported LiveChart entries and existing entries whose undated episode 1 was replaced by a later episode.
