@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLiveChartMetadata } from '../src/livechart.js';
+import { fetchLiveChartEpisodes, parseLiveChartMetadata } from '../src/livechart.js';
 
 const url = 'https://www.livechart.me/anime/12991';
 const detail = (total = '12') => `<html><head>
@@ -32,4 +32,60 @@ test('legacy detail text still supplies episode totals and premiere dates', () =
   const metadata = parseLiveChartMetadata('<h1>Example</h1><div><div>Premiere</div><a>Jan 10, 2023</a></div><div>Episodes 0 / 120</div>', url);
   assert.equal(metadata.episodeCount, 120);
   assert.equal(metadata.premiereDate, '2023-01-10');
+});
+
+function progression(id, total, own = false) {
+  return `<div data-controller="viewing-progression" data-viewing-progression-anime-id="${id}"
+    ${own ? 'data-anime-details-target="viewingProgression"' : 'data-anime-item-target="viewingProgression"'}
+    ${total === undefined ? '' : `data-viewing-progression-total-count-value="${total}"`}>
+    <span>?</span><span>/${total ?? '–'}</span></div>`;
+}
+
+test('an unknown own total cannot inherit counts from related anime cards', () => {
+  for (const [id, unrelatedTotal] of [['13232', 1], ['13571', 161]]) {
+    const html = `<article data-anime-id="4003">${progression('4003', unrelatedTotal)}</article>
+      <div data-controller="anime-details" data-anime-details-id="${id}">
+      <div>Episodes${progression(id, undefined, true)}</div></div>`;
+    const metadata = parseLiveChartMetadata(html, `https://www.livechart.me/anime/${id}`);
+    assert.equal(metadata.episodeCount, null);
+    assert.equal(metadata.episodeCountKnown, true);
+  }
+});
+
+test('own totals win over earlier related widgets and the wrong anime identity is rejected', () => {
+  const foreign = `<article data-anime-item-id="4003">${progression('4003', 161)}</article>`;
+  const known = parseLiveChartMetadata(foreign + progression('12991', 12, true), url);
+  assert.equal(known.episodeCount, 12);
+  assert.equal(known.episodeCountKnown, true);
+  const wrongPage = `<div data-controller="anime-details" data-anime-details-id="4003">
+    <div>Episodes 161</div>${progression('4003', 161, true)}</div>`;
+  const wrong = parseLiveChartMetadata(wrongPage, url);
+  assert.equal(wrong.episodeCount, null);
+  assert.equal(wrong.episodeCountKnown, false);
+});
+
+test('missing or malformed own totals do not fall back to recommendation text', () => {
+  const related = '<article data-anime-id="4003"><div>Episodes 161</div></article>';
+  for (const html of [related, progression('12991', 'invalid', true) + related,
+    '<script>Episodes 161</script>', '<h1>Episodes and related titles</h1>']) {
+    const metadata = parseLiveChartMetadata(html, url);
+    assert.equal(metadata.episodeCount, null);
+    assert.equal(metadata.episodeCountKnown, false);
+  }
+});
+
+test('a successful fetch distinguishes an authoritative unknown total from missing metadata', async () => {
+  const schedule = `<article data-release-schedule-release-schedule-id="1">
+    <a href="/anime/12991/schedules/1">Released</a><a title="Simulcast: Subbed">Subbed</a>
+    <span data-tracklist-json='{"de":["DE"]}'></span></article>`;
+  const unknown = await fetchLiveChartEpisodes(`${url}/schedules`, {
+    fetchHtml: async target => target.endsWith('/schedules') ? schedule : progression('12991', undefined, true)
+  });
+  assert.equal(unknown.episodeCount, null);
+  assert.equal(unknown.episodeCountKnown, true);
+  const missing = await fetchLiveChartEpisodes(`${url}/schedules`, {
+    fetchHtml: async target => target.endsWith('/schedules') ? schedule : '<h1>Example</h1>'
+  });
+  assert.equal(missing.episodeCount, null);
+  assert.equal(missing.episodeCountKnown, false);
 });

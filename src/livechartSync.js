@@ -117,7 +117,8 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
   const current = store.getSeries(series.id);
   if (!current) return { changed: false, live: {}, skipped: true, updated: null };
   if (current?.scheduleMode === "manual") return { changed: false, live: {}, skipped: true, updated: current };
-  const episodeCount = Number.isFinite(fetched.episodeCount) ? fetched.episodeCount : series.episodeCount;
+  const episodeCount = Number.isFinite(fetched.episodeCount) ? fetched.episodeCount
+    : fetched.episodeCountKnown === true ? null : series.episodeCount;
   const live = { ...fetched, unscheduledLanguageTracks: (fetched.unscheduledLanguageTracks || []).filter(incoming => {
     const track = (series.languageTracks || []).find(item => item.code === incoming.code);
     // "Released" may replace a finale just before its scheduled announcement.

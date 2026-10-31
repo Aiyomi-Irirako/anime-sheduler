@@ -58,6 +58,8 @@ Expected output:
 - The reader supports both the previous and current page structures. Pages without recognizable schedules fail the sync instead of replacing saved releases with empty data.
 - A successfully read source can still have an undated or paused release. Such entries stay without a date; the scheduler does not invent a weekly date to fill the gap.
 - Keep a backup before importing or restoring data. A corrected sync uses the current LiveChart schedule; it does not send announcements for every historical episode missed during the outage.
+- Version `1.9.3` also recognizes local streaming, cinema and physical-media schedule categories without letting unrelated entries block valid German streaming dates. Future categories that cannot be read still fail safely.
+- If `1.9.2` copied a total episode count from a related title, update to `1.9.3` and sync again. Counts now come from the current anime's own Episodes field. When that field explicitly has no announced total, a followed LiveChart entry returns to an unknown total instead of retaining the unrelated number. A failed detail-page read preserves the saved total; manual schedules are unchanged.
 
 ## Security Notes
 
