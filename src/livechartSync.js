@@ -11,6 +11,7 @@ import { scheduleDateFields } from "./livechartCatalog.js";
 import { normalizeDailyTime } from "./utils.js";
 import { planLateDubNotices } from "./lateDub.js";
 import { planReleaseCompletionNotices } from "./releaseCompletion.js";
+import { reconcileLiveChartServices } from "./livechartServices.js";
 
 const WEEKDAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const controllers = new WeakMap();
@@ -202,7 +203,10 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
       : series.status;
   const patch = {
     ...series,
-    service: overwriteSchedule && live.service ? live.service : series.service || live.service,
+    service: overwriteSchedule ? reconcileLiveChartServices(current, live) || current.service
+      : current.service || live.service,
+    preferredService: current.preferredService,
+    streamingServiceId: current.streamingServiceId,
     status,
     enabled: completedAfterSync ? false : reactivated ? true : series.enabled,
     nextEpisode,

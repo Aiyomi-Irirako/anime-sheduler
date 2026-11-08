@@ -1500,7 +1500,8 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
     const existing = findDuplicateSeries(store.listSeries(), { scheduleLink }, seriesId);
     if (existing) return duplicateResponse(existing);
     try {
-      const draft = await readSeriesDraft(scheduleLink, { settings: store.getSettings() });
+      const draft = await readSeriesDraft(scheduleLink, { settings: store.getSettings(),
+        existingSeries: seriesId ? store.getSeries(seriesId) : null });
       const duplicate = findDuplicateSeries(store.listSeries(), draft, seriesId);
       if (duplicate) return duplicateResponse(duplicate);
       return res.json({ draft });
