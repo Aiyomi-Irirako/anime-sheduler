@@ -1364,8 +1364,10 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
         </label>
         <div class="inline-options span-2">
           <button type="button" class="button secondary" data-release-preset="weekly">Weekly release</button>
+          <button type="button" class="button secondary" data-release-preset="batch">One-time batch</button>
           <button type="button" class="button secondary" data-release-preset="complete">Complete series</button>
-          <span data-release-preset-status role="status">Presets apply to the main release. Complete series requires a total episode count.</span>
+          <button type="button" class="button secondary" data-release-preset="pause">Pause main release</button>
+          <span data-release-preset-status role="status">One-time batch needs no total. Batch and Pause switch the entire entry, including dubs, to Manual schedule. Complete series requires a total.</span>
         </div>
         <label class="span-2">
           <span>Image URL</span>
@@ -1379,6 +1381,7 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
           <label class="check"><input type="checkbox" name="enabled" ${toFormBoolean(series.enabled)}> Active</label>
           <label class="check"><input type="checkbox" name="weekly" ${toFormBoolean(series.weekly)}> Continue weekly</label>
         </div>
+        <p class="span-2 muted-text">Manual schedule skips LiveChart for all versions. Continue weekly creates another main release seven days after each post. One-time batch stops that continuation; Pause main release also removes its pending date. Existing dub schedules keep their own weekly settings. Save to apply.</p>
         ${isSeriesComplete(series) ? `<div class="span-2">
           <input type="hidden" name="completionAcknowledgementPresent" value="1">
           <label class="check boxed-check"><input type="checkbox" name="completionAcknowledged" ${toFormBoolean(series.completionAcknowledged)}> Completion handled</label>

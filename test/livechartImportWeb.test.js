@@ -5,8 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { load } from 'cheerio';
+import { DateTime } from 'luxon';
 import { createStore } from '../src/store.js';
 import { createWebApp } from '../src/web.js';
+import { checkDueAnnouncements } from '../src/scheduler.js';
 
 const link = 'https://www.livechart.me/anime/11218/schedules';
 const fullDraft = { title: 'Kubo', scheduleLink: link, scheduleMode: 'livechart', liveChartLanguageStrict: true,
@@ -166,7 +168,8 @@ async function client(html) {
   });
   controls.namedItem = (name) => controls.find(control => control.name === name);
   const importButton = makeElement(), status = makeElement(), titleStatus = makeElement(), presetStatus = makeElement();
-  const presets = ['weekly', 'complete'].map(value => makeElement('', '', 'button', { releasePreset: value }));
+  const presets = $('#series-form [data-release-preset]').map((_, element) =>
+    makeElement('', '', 'button', { releasePreset: $(element).attr('data-release-preset') })).get();
   const form = Object.assign(makeElement(), { elements: controls, dataset: { seriesId: $('#series-form').attr('data-series-id') },
     querySelector: (selector) => ({ '[data-livechart-import]': importButton, '[data-livechart-import-status]': status,
       '[data-release-preset-status]': presetStatus })[selector],
@@ -187,7 +190,15 @@ async function client(html) {
   const start = () => importButton.dispatchEvent({ type: 'click' });
   const respond = (index, data, ok = true) => requests[index].resolve({ ok, json: async () => data });
   const preset = (name) => presets.find(item => item.dataset.releasePreset === name).dispatchEvent({ type: 'click' });
-  return { input, edit, start, respond, requests, status, preset, presetStatus };
+  const body = () => {
+    const values = new URLSearchParams();
+    for (const control of controls) {
+      if (!control.name || (control.type === 'checkbox' && !control.checked)) continue;
+      values.append(control.name, control.type === 'checkbox' ? 'on' : control.value || '');
+    }
+    return values;
+  };
+  return { input, edit, start, respond, requests, status, preset, presetStatus, body };
 }
 
 test('metadata-only drafts keep manual release fields, custom title, notes and service IDs', async (t) => {
@@ -274,5 +285,167 @@ test('release presets reactivate a finished disabled series without changing its
     assert.equal(browser.input('languageEpisode_de').value, '');
     assert.equal(browser.requests.length, 0);
     assert.equal(store.getSeries(existing.id).enabled, false);
+  }
+});
+
+function isolateManualScheduling(t, base) {
+  const previousAutomaticPosts = process.env.DISCORD_AUTO_POSTS;
+  delete process.env.DISCORD_AUTO_POSTS;
+  t.after(() => {
+    if (previousAutomaticPosts === undefined) delete process.env.DISCORD_AUTO_POSTS;
+    else process.env.DISCORD_AUTO_POSTS = previousAutomaticPosts;
+  });
+  const originalFetch = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', (input, options) => {
+    assert.ok(String(input).startsWith(`${base}/`), 'Only the isolated local test server may be accessed');
+    return originalFetch(input, options);
+  });
+  const messages = [];
+  const discord = { enabled: true, ready: true, async post(message) {
+    messages.push(message.embeds[0].toJSON());
+    return { sent: [{ channelId: '111111111111111111' }], failed: [] };
+  } };
+  const syncSeries = async () => { throw new Error('A saved manual release must not request a LiveChart sync'); };
+  return { discord, messages, syncSeries };
+}
+
+test('a one-time partial batch saves and posts 241–360 once without guessing a total or weekly continuation', async (t) => {
+  const { store, get, save, base } = await setup(t);
+  const { discord, messages, syncSeries } = isolateManualScheduling(t, base);
+  await store.updateSettings({ ...store.getSettings(), timeZone: 'Europe/Berlin',
+    automaticDiscordPostsEnabled: true, reminderMinutes: 0 });
+  const existing = await store.upsertSeries({ title: 'Partial catalogue', service: 'ADN',
+    scheduleLink: 'https://www.livechart.me/anime/10860/schedules', scheduleMode: 'livechart',
+    nextEpisode: 241, episodeBatchSize: 120, episodeCount: null,
+    nextDate: '2026-11-09', releaseDay: 'monday', releaseTime: '18:00',
+    status: 'airing', enabled: true, weekly: true,
+    lastPostedKey: 'partial:main:121-240:release-time:2026-10-19T18:00:00.000+02:00',
+    lastPostedAt: '2026-10-19T18:00:10+02:00',
+    languageTracks: [{ code: 'de', enabled: true, available: true, nextEpisode: 5,
+      nextDate: '2027-01-01', releaseTime: '12:00', weekly: true,
+      lastPostedKey: 'partial:language:de:4:release-time:2026-10-25T12:00:00.000+01:00',
+      lastPostedAt: '2026-10-25T12:00:10+01:00' }] });
+  const before = structuredClone(store.snapshot());
+  const browser = await client(await (await get(`/series/${existing.id}`)).text());
+  await browser.preset('batch');
+  assert.equal(browser.input('nextEpisode').value, '241');
+  assert.equal(browser.input('episodeBatchSize').value, '120');
+  assert.equal(browser.input('episodeCount').value, '');
+  assert.equal(browser.input('scheduleMode').value, 'manual');
+  assert.equal(browser.input('weekly').checked, false);
+  assert.equal(browser.input('languageEpisode_de').value, '5');
+  assert.equal(browser.requests.length, 0);
+  assert.deepEqual(store.snapshot(), before, 'Choosing a preset only edits the draft');
+  assert.equal((await save(`/series/${existing.id}`, browser.body())).status, 302);
+  const saved = store.getSeries(existing.id);
+  assert.equal(saved.scheduleMode, 'manual');
+  assert.equal(saved.weekly, false);
+  assert.equal(saved.episodeCount, null);
+  assert.deepEqual(saved.languageTracks.filter(track => track.enabled || track.available), existing.languageTracks);
+
+  const now = DateTime.fromISO('2026-11-09T18:00:00', { zone: 'Europe/Berlin' });
+  assert.equal((await checkDueAnnouncements(store, discord, { now, syncSeries })).posted, 1);
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].title, /Episode 241-360/);
+  const advanced = store.getSeries(existing.id);
+  assert.equal(advanced.nextEpisode, 361);
+  assert.equal(advanced.nextDate, '');
+  assert.equal(advanced.releaseDay, '');
+  assert.equal(advanced.episodeCount, null);
+  assert.notEqual(advanced.status, 'finished');
+  assert.equal(advanced.enabled, true);
+  assert.deepEqual(advanced.languageTracks.filter(track => track.enabled || track.available), existing.languageTracks);
+  assert.equal((await checkDueAnnouncements(store, discord, { now: now.plus({ weeks: 1 }), syncSeries })).posted, 0);
+  assert.equal(messages.length, 1);
+});
+
+test('pausing an already extrapolated manual release removes its pending date and preserves counters, history and dubs', async (t) => {
+  const { store, get, save, base } = await setup(t);
+  const { discord, messages, syncSeries } = isolateManualScheduling(t, base);
+  await store.updateSettings({ ...store.getSettings(), timeZone: 'Europe/Berlin',
+    automaticDiscordPostsEnabled: true, reminderMinutes: 0 });
+  const existing = await store.upsertSeries({ title: 'Manually continued catalogue', service: 'ADN',
+    scheduleLink: 'https://www.livechart.me/anime/10860/schedules', scheduleMode: 'manual',
+    nextEpisode: 243, episodeBatchSize: 1, episodeCount: null, nextDate: '2026-11-09',
+    releaseDay: 'monday', releaseTime: '18:00', status: 'planned', enabled: true, weekly: true,
+    lastPostedKey: 'catalogue:main:day:missing-time:2026-11-02T18:00:00.000+01:00',
+    lastPostedAt: '2026-11-02T18:00:50.775+01:00',
+    languageTracks: [{ code: 'de', enabled: true, available: true, nextEpisode: 5,
+      nextDate: '2027-01-01', releaseTime: '12:00', weekly: true,
+      lastPostedKey: 'catalogue:language:de:4:release-time:2026-10-25T12:00:00.000+01:00',
+      lastPostedAt: '2026-10-25T12:00:10+01:00' }] });
+  const before = structuredClone(store.snapshot());
+  const browser = await client(await (await get(`/series/${existing.id}`)).text());
+  await browser.preset('pause');
+  for (const name of ['nextDate', 'releaseDay', 'releaseTime']) assert.equal(browser.input(name).value, '');
+  assert.equal(browser.input('nextEpisode').value, '243');
+  assert.equal(browser.input('episodeBatchSize').value, '1');
+  assert.equal(browser.input('episodeCount').value, '');
+  assert.equal(browser.input('weekly').checked, false);
+  assert.equal(browser.input('scheduleMode').value, 'manual');
+  assert.equal(browser.input('enabled').checked, true);
+  assert.equal(browser.input('status').value, existing.status);
+  assert.equal(browser.input('languageNextDate_de').value, '2027-01-01');
+  assert.deepEqual(store.snapshot(), before, 'Pausing only edits the draft until Save');
+  assert.equal((await save(`/series/${existing.id}`, browser.body())).status, 302);
+  const paused = store.getSeries(existing.id);
+  for (const name of ['nextEpisode', 'episodeBatchSize', 'episodeCount', 'status', 'enabled', 'lastPostedKey', 'lastPostedAt']) {
+    assert.equal(paused[name], existing[name], name);
+  }
+  assert.deepEqual(paused.languageTracks.filter(track => track.enabled || track.available), existing.languageTracks);
+  assert.deepEqual(store.snapshot().posts, before.posts);
+  const now = DateTime.fromISO('2026-11-09T18:00:00', { zone: 'Europe/Berlin' });
+  assert.equal((await checkDueAnnouncements(store, discord, { now, syncSeries })).posted, 0);
+  assert.equal((await checkDueAnnouncements(store, discord, { now: now.plus({ weeks: 1 }), syncSeries })).posted, 0);
+  assert.equal(messages.length, 0);
+  assert.equal(store.getSeries(existing.id).nextEpisode, 243);
+});
+
+test('a one-time batch can start without a known total and reactivate only the main release draft', async (t) => {
+  const { store, get } = await setup(t);
+  const existing = await store.upsertSeries({ title: 'New partial release', scheduleMode: 'livechart',
+    status: 'finished', enabled: false, nextEpisode: null, episodeCount: null, episodeBatchSize: 120,
+    languageTracks: [{ code: 'de', enabled: false, nextEpisode: null, weekly: false }] });
+  const before = structuredClone(store.snapshot());
+  const browser = await client(await (await get(`/series/${existing.id}`)).text());
+  await browser.preset('batch');
+  assert.equal(browser.input('nextEpisode').value, '1');
+  assert.equal(browser.input('episodeBatchSize').value, '120');
+  assert.equal(browser.input('episodeCount').value, '');
+  assert.equal(browser.input('weekly').checked, false);
+  assert.equal(browser.input('enabled').checked, true);
+  assert.equal(browser.input('status').value, 'planned');
+  assert.equal(browser.input('languageEnabled_de').checked, false);
+  assert.equal(browser.input('languageEpisode_de').value, '');
+  assert.equal(browser.requests.length, 0);
+  assert.deepEqual(store.snapshot(), before);
+});
+
+test('choosing a batch or pause while an import is loading protects the retained episode range and unknown total', async (t) => {
+  const { store, get } = await setup(t);
+  const existing = await store.upsertSeries({ title: 'Existing partial release', scheduleLink: link,
+    scheduleMode: 'livechart', status: 'airing', enabled: true, nextEpisode: 241,
+    episodeCount: null, episodeBatchSize: 120, nextDate: '2026-11-09',
+    releaseDay: 'monday', releaseTime: '18:00', weekly: true, languageTracks: [] });
+  const before = structuredClone(store.snapshot());
+  const html = await (await get(`/series/${existing.id}`)).text();
+  for (const preset of ['batch', 'pause']) {
+    const browser = await client(html);
+    const pending = browser.start();
+    assert.equal(browser.requests.length, 1);
+    await browser.preset(preset);
+    browser.respond(0, { draft: fullDraft });
+    await pending;
+    assert.equal(browser.input('nextEpisode').value, '241', preset);
+    assert.equal(browser.input('episodeBatchSize').value, '120', preset);
+    assert.equal(browser.input('episodeCount').value, '', preset);
+    assert.equal(browser.input('scheduleMode').value, 'manual', preset);
+    assert.equal(browser.input('weekly').checked, false, preset);
+    if (preset === 'pause') {
+      for (const name of ['nextDate', 'releaseDay', 'releaseTime']) {
+        assert.equal(browser.input(name).value, '', name);
+      }
+    }
+    assert.deepEqual(store.snapshot(), before, 'Neither import nor presets save the draft');
   }
 });

@@ -138,19 +138,38 @@
 
   form.querySelectorAll('[data-release-preset]').forEach((preset) => preset.addEventListener('click', () => {
     const target = form.querySelector('[data-release-preset-status]');
+    if (preset.dataset.releasePreset === 'pause') {
+      // Preserve these choices even if an earlier draft request is still loading.
+      for (const name of ['nextEpisode', 'episodeBatchSize', 'episodeCount', 'status', 'enabled']) {
+        const input = field(name);
+        setField(name, valueOf(input));
+      }
+      setField('scheduleMode', 'manual');
+      setField('weekly', false);
+      for (const name of ['nextDate', 'releaseDay', 'releaseTime']) setField(name, '');
+      form.dispatchEvent(new Event('input', { bubbles: true }));
+      target.textContent = 'Main release paused. The entire entry now uses Manual schedule; existing dub schedules remain active as configured. Save to apply.';
+      return;
+    }
     const complete = preset.dataset.releasePreset === 'complete';
+    const batch = preset.dataset.releasePreset === 'batch';
     const count = Number(field('episodeCount').value);
     if (complete && (!Number.isInteger(count) || count < 1)) {
       target.textContent = 'Enter the total episode count before choosing Complete series.';
       return;
     }
     if (complete || !field('nextEpisode').value.trim()) setField('nextEpisode', 1);
-    setField('episodeBatchSize', complete ? count : 1);
-    setField('weekly', !complete);
+    if (!batch) setField('episodeBatchSize', complete ? count : 1);
+    if (batch) {
+      for (const name of ['nextEpisode', 'episodeBatchSize', 'episodeCount']) setField(name, field(name).value);
+      setField('scheduleMode', 'manual');
+    }
+    setField('weekly', !complete && !batch);
     setField('enabled', true);
     if (field('status').value === 'finished') setField('status', 'planned');
     form.dispatchEvent(new Event('input', { bubbles: true }));
-    target.textContent = complete ? `Main release set to all ${count} episodes. Enter the release date and time.`
+    target.textContent = batch ? 'One-time batch selected. The entire entry now uses Manual schedule, including dubs. Enter the first episode, batch size and date; the main release will wait after posting. Save to apply.'
+      : complete ? `Main release set to all ${count} episodes. Enter the release date and time.`
       : 'Main release set to one episode per week. Enter the next episode, date and time.';
   }));
   updateTitleRequired();
