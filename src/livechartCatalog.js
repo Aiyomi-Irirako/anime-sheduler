@@ -3,6 +3,7 @@ import { DateTime } from 'luxon';
 import { normalizeLanguageCode, languageLabel } from './languages.js';
 import { normalizeServiceList, normalizeServiceName } from './services.js';
 import { MAX_EPISODE_BATCH_SIZE, WEEKDAYS } from './constants.js';
+import { collectLiveChartServiceEvidence, reconcileLiveChartServices } from './livechartServices.js';
 
 const text = (node) => node.text().replace(/\s+/g, ' ').trim();
 const unique = (values) => [...new Set(values.filter(Boolean))];
@@ -193,6 +194,8 @@ export function buildDiscoveredSeries(candidate, scheduleHtml, detailHtml, setti
   }).filter(Boolean);
   const services = unique([...sub, ...rows.filter((row) => row.isDub && row.audioCodes.some((code) => enabledCodes.includes(code)))]
     .flatMap((row) => row.services));
+  const serviceEvidence = collectLiveChartServiceEvidence(parsed, language ? [language] : [],
+    row => isUpcomingSchedule(row, settings, now));
   const $ = load(detailHtml);
   const premiereLabel = $('*').filter((_, e) => $(e).children().length === 0 && text($(e)) === 'Premiere').first();
   const premiereText = text(premiereLabel.parent()).replace(/^Premiere\s*/, '');
@@ -201,7 +204,9 @@ export function buildDiscoveredSeries(candidate, scheduleHtml, detailHtml, setti
     DateTime.fromFormat(premiereText, 'MMM d, yyyy', { locale: 'en' });
   const dateFields = scheduleDateFields(main?.episode ? main : null, zone);
   return {
-    title: candidate.title, service: normalizeServiceList(services.join(',')), scheduleLink: candidate.scheduleLink,
+    title: candidate.title, service: reconcileLiveChartServices({}, {
+      service: normalizeServiceList(services.join(',')), serviceEvidence
+    }), serviceEvidence, scheduleLink: candidate.scheduleLink,
     malId: candidate.malId, imageUrl: candidate.imageUrl,
     episodeCount: candidate.episodeCount ?? main?.batchEpisodeCount ?? selectedDubs.find(row => row.batchEpisodeCount)?.batchEpisodeCount ?? null,
     premiereDate: premiere.isValid ? premiere.toISODate() : '',

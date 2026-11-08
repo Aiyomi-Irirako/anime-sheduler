@@ -7,6 +7,7 @@ import { MAX_EPISODE_BATCH_SIZE } from "./constants.js";
 import { LATE_DUB_LOOKBACK_DAYS } from "./lateDub.js";
 import { DateTime } from "luxon";
 import { load } from "cheerio";
+import { collectLiveChartServiceEvidence, reconcileLiveChartServices } from "./livechartServices.js";
 
 function decodeHtml(value) {
   return String(value || "")
@@ -294,8 +295,11 @@ export function parseLiveChartEpisodes(html, options = {}) {
     : Math.floor(Date.now() / 1000);
   const preferredCodes = preferredLanguageCodes(options.preferredLanguageCodes);
   const today = DateTime.fromSeconds(nowTimestamp, { zone: options.timeZone || 'Europe/Berlin' }).toISODate();
-  const rows = selectScheduleRows(html, options.scheduleId, options).filter((row) => isApplicableSchedule(row, options))
+  const sourceRows = selectScheduleRows(html, options.scheduleId, options)
     .map((row) => ({ ...row, services: row.services.length ? row.services : articleServices(row.text) }));
+  const rows = sourceRows.filter((row) => isApplicableSchedule(row, options));
+  const serviceEvidence = collectLiveChartServiceEvidence(sourceRows, preferredCodes,
+    row => isUpcomingSchedule(row, options, DateTime.fromSeconds(nowTimestamp)));
   const parsed = rows.filter((row) => Number.isFinite(row.episode) && !row.isReleased &&
     (!row.partialDate || row.partialDate >= today));
 
@@ -408,7 +412,8 @@ export function parseLiveChartEpisodes(html, options = {}) {
     lateDubReleases,
     unscheduledLanguageTracks,
     finishedLanguageCodes,
-    service: mergeServices(serviceRows),
+    service: reconcileLiveChartServices({}, { service: mergeServices(serviceRows), serviceEvidence }),
+    serviceEvidence,
     mainFinished,
     preferredReleaseFinished
   };

@@ -1,11 +1,12 @@
 import { DateTime } from 'luxon';
-import { fetchLiveChartHtml } from './livechartHttp.js';
+import { fetchLiveChartHtml, liveChartId } from './livechartHttp.js';
 import { liveChartScheduleTarget, parseLiveChartMetadata } from './livechart.js';
 import { buildDiscoveredSeries, hasUpcomingGermanRelease } from './livechartCatalog.js';
+import { reconcileLiveChartServices } from './livechartServices.js';
 
 // This loader only returns a draft; saving and enabling announcements remains a separate action.
 export async function fetchLiveChartSeriesDraft(scheduleLink, {
-  settings = {}, fetchHtml = fetchLiveChartHtml, now = DateTime.now()
+  settings = {}, fetchHtml = fetchLiveChartHtml, now = DateTime.now(), existingSeries = null
 } = {}) {
   const target = liveChartScheduleTarget(scheduleLink);
   const detailHtml = await fetchHtml(target.animeUrl, { ttlMs: 24 * 3600000 });
@@ -25,9 +26,11 @@ export async function fetchLiveChartSeriesDraft(scheduleLink, {
     // Do not replace any user-entered service, schedule, track, or activation fields.
     return { ...metadata, ...source, scheduleMode: 'manual' };
   }
+  const draft = buildDiscoveredSeries({ ...metadata, scheduleLink: target.scheduleLink }, scheduleHtml,
+    detailHtml, germanSettings, now, selection);
+  const previous = existingSeries && liveChartId(existingSeries.scheduleLink) === target.animeId ? existingSeries : {};
   return {
-    ...buildDiscoveredSeries({ ...metadata, scheduleLink: target.scheduleLink }, scheduleHtml,
-      detailHtml, germanSettings, now, selection),
+    ...draft, service: reconcileLiveChartServices(previous, draft),
     ...source, scheduleMode: 'livechart'
   };
 }
