@@ -1,6 +1,6 @@
 import { languageLabel, normalizeLanguageCode } from "./languages.js";
 import { normalizeServiceName, normalizeServiceList } from "./services.js";
-import { selectScheduleRows, isUpcomingSchedule } from "./livechartCatalog.js";
+import { selectScheduleRows, isUpcomingSchedule, isApplicableSchedule } from "./livechartCatalog.js";
 import { fetchLiveChartHtml, liveChartId } from "./livechartHttp.js";
 import { RELEASE_POST_EXPIRY_HOURS } from "./schedule.js";
 import { MAX_EPISODE_BATCH_SIZE } from "./constants.js";
@@ -294,7 +294,7 @@ export function parseLiveChartEpisodes(html, options = {}) {
     : Math.floor(Date.now() / 1000);
   const preferredCodes = preferredLanguageCodes(options.preferredLanguageCodes);
   const today = DateTime.fromSeconds(nowTimestamp, { zone: options.timeZone || 'Europe/Berlin' }).toISODate();
-  const rows = selectScheduleRows(html, options.scheduleId).filter((row) => !row.regionWarning)
+  const rows = selectScheduleRows(html, options.scheduleId, options).filter((row) => isApplicableSchedule(row, options))
     .map((row) => ({ ...row, services: row.services.length ? row.services : articleServices(row.text) }));
   const parsed = rows.filter((row) => Number.isFinite(row.episode) && !row.isReleased &&
     (!row.partialDate || row.partialDate >= today));

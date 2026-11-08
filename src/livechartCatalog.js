@@ -114,14 +114,29 @@ export function parseScheduleRows(html) {
   }).get();
 }
 
-export function selectScheduleRows(html, scheduleId = '') {
+export function isApplicableSchedule(row, settings = {}) {
+  if (!row.regionWarning) return true;
+  // This warning reflects the HTTP client's location, which can be a VPS in a
+  // different country. Explicitly followed streaming languages take precedence.
+  // Keep regional cinema, physical-media and unrelated language rows excluded.
+  if (!/^(?:Streaming|Simulcast)(?:\s*\([^)]*\))?(?::\s*.+)?$/i.test(row.title)) return false;
+  const codes = values => (Array.isArray(values) ? values : [values])
+    .map(normalizeLanguageCode).filter(code => code && code !== 'ja');
+  const subtitles = codes(settings.preferredLanguageCodes ?? settings.preferredScheduleLanguage);
+  const audio = [...subtitles, ...codes(settings.enabledLanguageCodes),
+    ...(settings.pendingLanguageTracks || []).filter(track => track.enabled).map(track => track.code)];
+  return Boolean((row.isSubbed && row.subtitleCodes.some(code => subtitles.includes(code))) ||
+    (row.isDub && row.audioCodes.some(code => audio.includes(code))));
+}
+
+export function selectScheduleRows(html, scheduleId = '', settings = {}) {
   const rows = parseScheduleRows(html);
   if (!rows.length) throw new Error('No LiveChart schedules could be read.');
-  // Regional entries cannot supply our schedule and must not block readable rows.
-  if (rows.some(row => !row.regionWarning && !row.isDub && !row.isMain && !row.isOtherSchedule)) {
+  // Validate rows we can follow, including language matches warned about the host region.
+  if (rows.some(row => isApplicableSchedule(row, settings) && !row.isDub && !row.isMain && !row.isOtherSchedule)) {
     throw new Error('The LiveChart schedule format could not be read; previous data was kept.');
   }
-  if (rows.some(row => !row.regionWarning && (row.isSubbed || row.isDub) && !row.languageDataReadable)) {
+  if (rows.some(row => isApplicableSchedule(row, settings) && (row.isSubbed || row.isDub) && !row.languageDataReadable)) {
     throw new Error('The LiveChart schedule languages could not be read; previous data was kept.');
   }
   if (!scheduleId) return rows;
@@ -142,7 +157,7 @@ export function scheduleDateFields(row, timeZone = 'Europe/Berlin') {
 }
 
 export function isUpcomingSchedule(row, settings = {}, now = DateTime.now()) {
-  if (row.isReleased || row.regionWarning) return false;
+  if (row.isReleased || !isApplicableSchedule(row, settings)) return false;
   if (row.timestamp !== Number.MAX_SAFE_INTEGER) return row.timestamp >= now.toSeconds() - 300;
   const date = DateTime.fromISO(row.approximateDate || '', { zone: settings.timeZone || 'Europe/Berlin' });
   if (!date.isValid) return true;
@@ -151,15 +166,16 @@ export function isUpcomingSchedule(row, settings = {}, now = DateTime.now()) {
 }
 
 export function hasUpcomingGermanRelease(html, settings = {}, now = DateTime.now(), { scheduleId = '' } = {}) {
-  const rows = selectScheduleRows(html, scheduleId);
-  return rows.some((row) => isUpcomingSchedule(row, settings, now) &&
+  const germanSettings = { ...settings, preferredLanguageCodes: ['de'], enabledLanguageCodes: ['de'], pendingLanguageTracks: [] };
+  const rows = selectScheduleRows(html, scheduleId, germanSettings);
+  return rows.some((row) => isUpcomingSchedule(row, germanSettings, now) &&
     ((row.isSubbed && row.subtitleCodes.includes('de')) || (row.isDub && row.audioCodes.includes('de'))));
 }
 
 export function buildDiscoveredSeries(candidate, scheduleHtml, detailHtml, settings, now = DateTime.now(), { scheduleId = '' } = {}) {
   const zone = settings.timeZone || 'Europe/Berlin';
   const language = settings.preferredScheduleLanguage || '';
-  const parsed = selectScheduleRows(scheduleHtml, scheduleId);
+  const parsed = selectScheduleRows(scheduleHtml, scheduleId, settings);
   const rows = parsed.filter((row) => isUpcomingSchedule(row, settings, now));
   const order = (a, b) => (a.timestamp - b.timestamp) || (a.partialDate || '9999').localeCompare(b.partialDate || '9999');
   const sub = rows.filter((row) => row.isSubbed && (!language || row.subtitleCodes.includes(language)));

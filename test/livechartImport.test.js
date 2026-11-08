@@ -127,15 +127,15 @@ test('a specific schedule that disappears fails instead of silently switching se
   await assert.rejects(fetchLiveChartEpisodes(`${base}/schedules/99`, { fetchHtml: pages.fetchHtml }), /could not be found/);
 });
 
-test('a specific released, foreign, expired or region-inapplicable schedule is rejected', async () => {
-  for (const options of [{ label: 'Released' }, { sub: 'en' }, { date: '2026-09-01' }, { region: true }]) {
+test('a specific released, foreign, expired or region-inapplicable physical release is rejected', async () => {
+  for (const options of [{ label: 'Released' }, { sub: 'en' }, { date: '2026-09-01' }, { title: 'Blu-ray: Subbed', region: true }]) {
     const html = row(options) + row({ id: '21' });
     await assert.rejects(draft(html, { link: `${base}/schedules/20` }), /no upcoming German/);
   }
 });
 
-test('unselected expired and region-inapplicable German schedules leave manual fields untouched', async () => {
-  const { result } = await draft(row({ date: '2026-09-01' }) + row({ id: '21', region: true }));
+test('unselected expired and region-inapplicable physical German releases leave manual fields untouched', async () => {
+  const { result } = await draft(row({ date: '2026-09-01' }) + row({ id: '21', title: 'Blu-ray: Subbed', region: true }));
   assert.equal(result.scheduleMode, 'manual');
   assert.equal(Object.hasOwn(result, 'nextDate'), false);
 });
