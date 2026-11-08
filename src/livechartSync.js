@@ -44,7 +44,8 @@ export function prepareLiveLanguageTracks(liveTracks = [], settings = {}) {
     return {
       ...track,
       nextDate: track.nextDate || releaseAt.toISODate(),
-      releaseTime: track.releaseTime || releaseAt.toFormat("HH:mm")
+      releaseTime: track.releaseTime || releaseAt.toFormat("HH:mm"),
+      releaseDay: WEEKDAY_KEYS[releaseAt.weekday - 1] || ""
     };
   });
 }
@@ -187,10 +188,22 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
   const hasLanguageEpisode = languageTracks.some((track) => track.enabled && Number.isFinite(track.nextEpisode));
   const completedAfterSync = (mainFinished || series.status === "finished") && !hasMainEpisode && !hasLanguageEpisode;
   const reactivated = series.status === "finished" && !series.enabled && (hasMainEpisode || hasLanguageEpisode);
+  const sourceMainKnown = !live.mainUnavailable && !live.mainEpisodeUnknown &&
+    Number.isFinite(live.nextEpisode) && live.nextEpisode > 0;
+  const mainTimestamp = parseLiveTimestamp(live.mainReleaseTimestamp);
+  // A later source episode proves this release has started. The first episode
+  // remains planned until its actual source time, even after an early reminder.
+  const sourceMainStarted = sourceMainKnown && (live.nextEpisode > 1 ||
+    (mainTimestamp !== null && mainTimestamp <= now.toSeconds()));
+  const status = mainFinished ? "finished"
+    : reactivated && hasMainEpisode ? sourceMainStarted ? "airing" : "planned"
+    : sourceMainKnown && ["planned", "unknown"].includes(series.status)
+      ? sourceMainStarted ? "airing" : "planned"
+      : series.status;
   const patch = {
     ...series,
     service: overwriteSchedule && live.service ? live.service : series.service || live.service,
-    status: mainFinished ? "finished" : reactivated && hasMainEpisode ? "airing" : series.status,
+    status,
     enabled: completedAfterSync ? false : reactivated ? true : series.enabled,
     nextEpisode,
     episodeBatchSize,

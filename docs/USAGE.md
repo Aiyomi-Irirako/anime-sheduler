@@ -60,6 +60,9 @@ All LiveChart HTTP requests share a sequential queue with at least 6.5 seconds b
 - For LiveChart-managed dubs, a successful sync clears extrapolated weekly dates when the source has no usable upcoming release. Paused dubs wait for a new source date without being marked complete. A later rescheduled release can also correct an episode counter that previously advanced too far; earlier post history remains intact.
 - `Auto-enabled languages`: global settings for language versions found by LiveChart.
 - `LiveChart sync`: updates a single series from its LiveChart schedule link.
+- The editor heading and Series table show the next tracked announcement, including an enabled dub after the original release has finished. Their episode, weekday, date and time come from that selected version. The dashboard preview still uses its configured lookahead, so a later saved dub date can be visible in Series while outside that preview.
+- Sync derives the local weekday for exact dub times and corrects `Planned`/`Unknown` to `Airing` when the source has progressed beyond episode 1. A first episode stays planned until its source time; a completed original with a pending dub remains finished as an original release.
+- Saving an older editor preserves fields you have not changed when a background sync has updated them in the meantime. Explicit edits, including clearing a date or choosing Pause, still apply. This protection also applies to saving before a test post or an individual sync.
 - LiveChart sync overwrites the main release date, weekday, and time when LiveChart exposes an exact timestamp.
 - Date-only updates clear stale times; month/year-only updates clear stale posting dates. This also applies to explicitly updated dub schedules.
 - LiveChart language times: when LiveChart exposes a timestamp for a language version, the bot stores it as that language's next date and release time.

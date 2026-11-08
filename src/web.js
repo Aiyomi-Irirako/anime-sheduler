@@ -5,14 +5,12 @@ import { DateTime } from "luxon";
 import { buildAnnouncement, buildUpcomingSummary, releaseMentionRoleIds } from "./discordBot.js";
 import { APP_NAME, APP_VERSION, MAX_EPISODE_BATCH_SIZE, STATUS_OPTIONS, WEEKDAYS } from "./constants.js";
 import {
-  getNextRelease,
   getFinishedDeletionDate,
   getCompletionNotificationDate,
   getNextCompletionDigestDate,
   getNextAnnouncementRelease,
   listUpcomingTodayTomorrow,
   formatReleaseDate,
-  getReleaseDayLabel,
   formatEpisodeEntries,
   isSeriesComplete
 } from "./schedule.js";
@@ -34,6 +32,7 @@ import { fetchLiveChartTitle } from "./livechart.js";
 import { fetchLiveChartSeriesDraft } from "./livechartImport.js";
 import { liveChartId } from "./livechartHttp.js";
 import { findDuplicateSeries } from "./seriesIdentity.js";
+import { createSeriesFormBaseline, mergeSeriesFormInput } from "./seriesForm.js";
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 const upload = multer({
@@ -201,7 +200,7 @@ function renderHero(data, discordEnabled) {
 function renderStats(data, upcoming) {
   const active = data.series.filter((series) => series.enabled).length;
   const missingTime = data.series.filter((series) => {
-    const release = getNextRelease(series, data.settings);
+    const release = getNextAnnouncementRelease(series, data.settings);
     return release?.missingTime;
   }).length;
 
@@ -802,16 +801,18 @@ function renderSeriesTable(seriesList, settings, emptyText = "No series imported
 
   const rows = seriesList
     .map((series) => {
-      const release = getNextRelease(series, settings);
+      const release = getNextAnnouncementRelease(series, settings);
       const enabled = series.enabled ? "Active" : "Off";
-      const day = getReleaseDayLabel(series.releaseDay) || "-";
-      const time = series.releaseTime || "-";
+      const releaseDate = (release?.dateTime || release?.date)?.setZone(settings.timeZone || "Europe/Berlin");
+      const day = releaseDate?.isValid ? releaseDate.setLocale("en").toFormat("cccc") : "-";
+      const time = release?.missingTime ? "time missing" : releaseDate?.isValid ? releaseDate.toFormat("HH:mm") : "-";
+      const nextDate = releaseDate?.isValid ? releaseDate.toISODate() : "-";
       const css = series.enabled ? "pill on" : "pill off";
       return `<tr>
         <td><a class="title-link" href="/series/${escapeHtml(series.id)}">${escapeHtml(series.title)}</a></td>
         <td>${renderServiceBadges(series.service, series.preferredService)}</td>
         <td>${escapeHtml(day)}<small>${escapeHtml(time)}</small></td>
-        <td>${escapeHtml(series.nextDate || "-")}</td>
+        <td>${escapeHtml(nextDate)}</td>
         <td>${renderEpisodeStack(series, release)}</td>
         <td>${escapeHtml(formatReleaseDate(release, settings, false))}</td>
         <td><span class="${css}">${enabled}</span></td>
@@ -1274,7 +1275,7 @@ function renderSeriesLifecyclePanel(series, settings) {
 }
 
 function renderSeriesForm(series, settings, query, isNew = false, discordEnabled = true, syncStatus = {}) {
-  const release = getNextRelease(series, settings);
+  const release = getNextAnnouncementRelease(series, settings);
   const action = isNew ? "/series" : `/series/${encodeURIComponent(series.id)}`;
   const title = isNew ? "New Series" : series.title;
 
@@ -1291,6 +1292,8 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
       </div>
       ${isNew ? '' : renderLiveChartSyncStatus(syncStatus)}
       <form id="series-form" class="grid-form edit-form" method="post" action="${action}" data-series-id="${isNew ? '' : escapeHtml(series.id)}">
+        ${isNew ? '' : `<input type="hidden" name="seriesFormBaseline" value="${escapeHtml(JSON.stringify(createSeriesFormBaseline(series)))}">`}
+        <input type="hidden" name="seriesFormChangedFields" value="[]">
         <input type="hidden" name="liveChartLanguageStrict" value="${series.liveChartLanguageStrict ? '1' : '0'}">
         <input type="hidden" name="liveChartImportLanguage" value="${escapeHtml(series.liveChartImportLanguage || '')}">
         <input type="hidden" name="malId" value="${escapeHtml(series.malId || '')}">
@@ -1757,7 +1760,8 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
     asyncRoute(async (req, res) => {
       const existing = store.getSeries(req.params.id);
       if (!existing) return res.redirect("/?error=Series not found");
-      await store.upsertSeries({ ...existing, ...formToSeries(req.body, existing.id) });
+      const input = mergeSeriesFormInput(existing, formToSeries(req.body, existing.id), req.body.seriesFormBaseline, req.body.seriesFormChangedFields);
+      await store.upsertSeries({ ...existing, ...input });
       res.redirect(`/series/${encodeURIComponent(existing.id)}?ok=Series saved`);
     })
   );
@@ -1779,7 +1783,8 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
     asyncRoute(async (req, res) => {
       const existing = store.getSeries(req.params.id);
       if (!existing) return res.redirect("/?error=Series not found");
-      const patch = await store.upsertSeries({ ...existing, ...formToSeries(req.body, existing.id) });
+      const input = mergeSeriesFormInput(existing, formToSeries(req.body, existing.id), req.body.seriesFormBaseline, req.body.seriesFormChangedFields);
+      const patch = await store.upsertSeries({ ...existing, ...input });
       const release = getNextAnnouncementRelease(patch, store.getSettings(), DateTime.now());
       if (!release) return res.redirect(`/series/${encodeURIComponent(existing.id)}?error=No release date could be calculated`);
       const message = buildAnnouncement(patch, release, store.getSettings());
@@ -1799,7 +1804,8 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
       const existing = store.getSeries(req.params.id);
       if (!existing) return res.redirect("/?error=Series not found");
 
-      const patch = { ...existing, ...formToSeries(req.body, existing.id) };
+      const input = mergeSeriesFormInput(existing, formToSeries(req.body, existing.id), req.body.seriesFormBaseline, req.body.seriesFormChangedFields);
+      const patch = req.body.seriesFormBaseline ? input : { ...existing, ...input };
       try {
         liveChartSync.start({ seriesId: existing.id, patch });
         res.redirect(`/series/${encodeURIComponent(existing.id)}`);
@@ -1845,6 +1851,9 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
   app.get("/health", (req, res) => res.json({ ok: true }));
 
   app.use((error, req, res, next) => {
+    if (error.code === 'INVALID_SERIES_FORM_BASELINE') {
+      return res.status(400).send(renderPage("Reload entry", `<p>${escapeHtml(error.message)}</p>`));
+    }
     if (error.code === 'DUPLICATE_SERIES') {
       return res.redirect(`/series/${encodeURIComponent(error.existingSeriesId)}?error=${encodeURIComponent(error.message)}`);
     }

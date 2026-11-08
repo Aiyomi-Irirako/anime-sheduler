@@ -8,10 +8,17 @@
   const status = form.querySelector('[data-livechart-import-status]');
   const titleStatus = document.getElementById('series-title-status');
   const revisions = new Map();
+  const editedFields = new Set();
+  const rememberField = (name, edited = true) => {
+    revisions.set(name, (revisions.get(name) || 0) + 1);
+    if (edited) editedFields.add(name);
+    const changedFields = field('seriesFormChangedFields');
+    if (changedFields) changedFields.value = JSON.stringify([...editedFields]);
+  };
   let sequence = 0, automaticTitle = '', titleTimer, controller;
   const valueOf = (input) => input.type === 'checkbox' ? input.checked : input.value;
   const rememberEdit = (event) => {
-    if (event.target.name) revisions.set(event.target.name, (revisions.get(event.target.name) || 0) + 1);
+    if (event.target.name) rememberField(event.target.name);
   };
   form.addEventListener('input', rememberEdit);
   form.addEventListener('change', rememberEdit);
@@ -22,13 +29,13 @@
     const input = field(name), previous = before.get(name);
     return input && previous && valueOf(input) === previous.value && (revisions.get(name) || 0) === previous.revision;
   };
-  const setField = (name, value, before) => {
+  const setField = (name, value, before, edited = true) => {
     if (before && !unchanged(name, before)) return false;
     const input = field(name);
     if (!input) return false;
     if (input.type === 'checkbox') input.checked = Boolean(value);
     else input.value = value == null ? '' : String(value);
-    revisions.set(name, (revisions.get(name) || 0) + 1);
+    rememberField(name, edited);
     return true;
   };
   const animeId = () => {
@@ -142,7 +149,7 @@
       // Preserve these choices even if an earlier draft request is still loading.
       for (const name of ['nextEpisode', 'episodeBatchSize', 'episodeCount', 'status', 'enabled']) {
         const input = field(name);
-        setField(name, valueOf(input));
+        setField(name, valueOf(input), undefined, false);
       }
       setField('scheduleMode', 'manual');
       setField('weekly', false);
@@ -161,7 +168,7 @@
     if (complete || !field('nextEpisode').value.trim()) setField('nextEpisode', 1);
     if (!batch) setField('episodeBatchSize', complete ? count : 1);
     if (batch) {
-      for (const name of ['nextEpisode', 'episodeBatchSize', 'episodeCount']) setField(name, field(name).value);
+      for (const name of ['nextEpisode', 'episodeBatchSize', 'episodeCount']) setField(name, field(name).value, undefined, false);
       setField('scheduleMode', 'manual');
     }
     setField('weekly', !complete && !batch);
