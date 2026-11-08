@@ -256,6 +256,8 @@ test("Save and Test post preserve acknowledgement for old forms and apply explic
     await store.upsertSeries({ ...store.getSeries(series.id), completionAcknowledged: true });
     const previousAt = store.getSeries(series.id).completionAcknowledgedAt;
     const legacy = editorForm(await (await get(`/series/${series.id}`)).text());
+    legacy.delete("seriesFormBaseline");
+    legacy.delete("seriesFormChangedFields");
     legacy.delete("completionAcknowledgementPresent");
     legacy.delete("completionAcknowledged");
     await post(`/series/${series.id}${suffix}`, legacy);
@@ -280,6 +282,8 @@ test("Sync form patches preserve legacy acknowledgement and honor explicitly che
   const { store, get, post, syncs } = await setup(t);
   const series = await store.upsertSeries({ ...completedSeries, completionAcknowledged: true });
   const body = editorForm(await (await get(`/series/${series.id}`)).text());
+  body.delete("seriesFormBaseline");
+  body.delete("seriesFormChangedFields");
   body.delete("completionAcknowledgementPresent");
   body.delete("completionAcknowledged");
   await post(`/series/${series.id}/sync-livechart`, body);

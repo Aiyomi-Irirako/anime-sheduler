@@ -449,3 +449,40 @@ test('choosing a batch or pause while an import is loading protects the retained
     assert.deepEqual(store.snapshot(), before, 'Neither import nor presets save the draft');
   }
 });
+
+test('batch and pause presets preserve newer synced progress unless the user explicitly edits the episode', async (t) => {
+  const { store, get, save, base, posts } = await setup(t);
+  const originalFetch = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', (input, options) => {
+    assert.ok(String(input).startsWith(`${base}/`), 'Only the isolated local test server may be accessed');
+    return originalFetch(input, options);
+  });
+  const original = await store.upsertSeries({ title: 'Concurrent partial release', scheduleLink: link,
+    scheduleMode: 'livechart', status: 'planned', enabled: true, nextEpisode: 6,
+    episodeCount: null, episodeBatchSize: 120, nextDate: '2026-11-09',
+    releaseDay: 'monday', releaseTime: '18:00', weekly: true, languageTracks: [] });
+  for (const preset of ['batch', 'pause']) {
+    for (const explicitlyEditEpisode of [false, true]) {
+      const label = `${preset}, explicit episode edit: ${explicitlyEditEpisode}`;
+      await store.upsertSeries(original);
+      const browser = await client(await (await get(`/series/${original.id}`)).text());
+      await store.upsertSeries({ ...store.getSeries(original.id), status: 'airing', nextEpisode: 7,
+        episodeCount: 360, nextDate: '2026-11-16', releaseTime: '19:00' });
+
+      await browser.preset(preset);
+      if (explicitlyEditEpisode) await browser.edit('nextEpisode', '6');
+      assert.equal((await save(`/series/${original.id}`, browser.body())).status, 302, label);
+      const saved = store.getSeries(original.id);
+      assert.equal(saved.nextEpisode, explicitlyEditEpisode ? 6 : 7, label);
+      assert.equal(saved.status, 'airing', label);
+      assert.equal(saved.episodeCount, 360, label);
+      assert.equal(saved.episodeBatchSize, 120, label);
+      assert.equal(saved.scheduleMode, 'manual', label);
+      assert.equal(saved.weekly, false, label);
+      assert.equal(saved.nextDate, preset === 'pause' ? '' : '2026-11-16', label);
+      assert.equal(saved.releaseDay, preset === 'pause' ? '' : 'monday', label);
+      assert.equal(saved.releaseTime, preset === 'pause' ? '' : '19:00', label);
+    }
+  }
+  assert.equal(posts(), 0);
+});
