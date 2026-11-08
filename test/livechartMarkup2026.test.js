@@ -53,14 +53,14 @@ test('new hashed audio/subtitle icons also classify track lists when role target
   assert.equal(hasUpcomingGermanRelease(html, settings, now), true);
 });
 
-test('new warnings outside the empty interaction link retain confirmation and regional safeguards', () => {
+test('new warnings retain confirmation while followed streaming languages override host-region hints', () => {
   const confirmation = currentRow({ warning: 'This release requires confirmation.' });
   assert.equal(selectScheduleRows(confirmation)[0].requiresConfirmation, true);
   assert.equal(parseLiveChartEpisodes(confirmation, options).languageTracks[0].releaseTimestamp, 1793545200);
   const regional = currentRow({ warning: 'This might not apply to your region.' });
   assert.equal(selectScheduleRows(regional)[0].regionWarning, true);
-  assert.equal(hasUpcomingGermanRelease(regional, settings, now), false);
-  assert.deepEqual(parseLiveChartEpisodes(regional, options).languageTracks, []);
+  assert.equal(hasUpcomingGermanRelease(regional, settings, now), true);
+  assert.equal(parseLiveChartEpisodes(regional, options).languageTracks[0].code, 'de');
 });
 
 test('Released belongs to the release heading and never to a notification menu', () => {

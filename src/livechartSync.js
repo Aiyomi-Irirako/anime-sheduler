@@ -111,6 +111,7 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
     preferredLanguageCodes: preferredScheduleLanguage ? [preferredScheduleLanguage] : [],
     timeZone: settings.timeZone,
     requirePreferredLanguage: series.liveChartLanguageStrict,
+    enabledLanguageCodes: series.liveChartImportLanguage ? [series.liveChartImportLanguage] : settings.enabledLanguageCodes || [],
     pendingLanguageTracks: series.languageTracks || [],
     nowTimestamp: Math.floor(now.toSeconds())
   });
@@ -366,7 +367,11 @@ export function createLiveChartSyncController(store, {
           const result = await syncOne(store, saved, { overwriteSchedule: true, source: 'livechart-sync', now: now() });
           job.checked = 1;
           job.updated = result.changed ? 1 : 0;
-          job.progress = `${saved.title}: ${result.changed ? 'LiveChart updated' : 'No changes found'}`;
+          const feedback = result.skipped && saved.scheduleMode === 'manual' ? 'Manual schedule kept'
+            : result.live?.mainUnavailable ? 'No matching subtitle schedule found for the selected language'
+            : result.live?.mainEpisodeUnknown ? 'LiveChart has not specified the next episode yet'
+            : result.changed ? 'LiveChart updated' : 'No changes found';
+          job.progress = `${saved.title}: ${feedback}`;
           return result;
         }
         const result = await syncAll(store, { onProgress: (progress) => {

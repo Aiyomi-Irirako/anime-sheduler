@@ -42,11 +42,11 @@ async function setup(t, overrides = {}) {
 
 test('German subtitles OR German audio qualifies; foreign and released catalogue entries do not', () => {
   for (const options of [{}, { subtitle: 'en', audio: 'de', title: 'Streaming: Dubbed' },
-    { label: '', precision: 1, date: '2026-01-01' }, { confirm: true }]) {
+    { label: '', precision: 1, date: '2026-01-01' }, { confirm: true }, { region: true }]) {
     assert.equal(hasUpcomingGermanRelease(schedule(options), settings, clock), true);
   }
   for (const options of [{ subtitle: 'en' }, { subtitle: 'ja', title: 'Broadcast (Japan)' },
-    { label: 'Released' }, { date: '2026-09-01' }, { region: true },
+    { label: 'Released' }, { date: '2026-09-01' }, { region: true, subtitle: 'en' },
     { precision: 2, date: '2026-08-01' }, { precision: 1, date: '2025-01-01' }]) {
     assert.equal(hasUpcomingGermanRelease(schedule(options), settings, clock), false);
   }
