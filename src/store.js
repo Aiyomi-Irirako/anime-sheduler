@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { renameSync, rmSync, writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DateTime } from "luxon";
 import { DEFAULT_TIME_ZONE } from "./constants.js";
