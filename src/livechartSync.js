@@ -12,6 +12,7 @@ import { normalizeDailyTime } from "./utils.js";
 import { planLateDubNotices } from "./lateDub.js";
 import { planReleaseCompletionNotices } from "./releaseCompletion.js";
 import { reconcileLiveChartServices } from "./livechartServices.js";
+import { describeLiveChartReleases, liveChartCheckSource } from "./livechartDiagnostics.js";
 
 const WEEKDAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const controllers = new WeakMap();
@@ -109,14 +110,29 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
   const settings = store.getSettings();
   const now = options.now || DateTime.now();
   const preferredScheduleLanguage = normalizePreferredScheduleLanguage(series.liveChartImportLanguage || settings.preferredScheduleLanguage);
-  const fetched = await (options.fetchEpisodes || fetchLiveChartEpisodes)(series.scheduleLink, {
-    preferredLanguageCodes: preferredScheduleLanguage ? [preferredScheduleLanguage] : [],
-    timeZone: settings.timeZone,
-    requirePreferredLanguage: series.liveChartLanguageStrict,
-    enabledLanguageCodes: series.liveChartImportLanguage ? [series.liveChartImportLanguage] : settings.enabledLanguageCodes || [],
-    pendingLanguageTracks: series.languageTracks || [],
-    nowTimestamp: Math.floor(now.toSeconds())
-  });
+  const source = liveChartCheckSource(series, settings);
+  const recordCheck = async (result) => {
+    try {
+      await store.recordLiveChartCheck?.(series.id, { source, attemptedAt: now.toISO(), ...result });
+    } catch (error) {
+      console.warn("Could not save LiveChart check result:", error.message);
+    }
+  };
+
+  let fetched;
+  try {
+    fetched = await (options.fetchEpisodes || fetchLiveChartEpisodes)(series.scheduleLink, {
+      preferredLanguageCodes: preferredScheduleLanguage ? [preferredScheduleLanguage] : [],
+      timeZone: settings.timeZone,
+      requirePreferredLanguage: series.liveChartLanguageStrict,
+      enabledLanguageCodes: series.liveChartImportLanguage ? [series.liveChartImportLanguage] : settings.enabledLanguageCodes || [],
+      pendingLanguageTracks: series.languageTracks || [],
+      nowTimestamp: Math.floor(now.toSeconds())
+    });
+  } catch (error) {
+    await recordCheck({ error: error?.message || "The LiveChart request failed." });
+    throw error;
+  }
   // A user can switch to manual scheduling while this request is in flight.
   // Keep their newly saved schedule instead of writing the older snapshot back.
   const current = store.getSeries(series.id);
@@ -133,8 +149,9 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
         getNextLanguageRelease({ ...series, episodeCount }, track, settings, now), settings, now));
   }) };
   const overwriteSchedule = Boolean(options.overwriteSchedule);
+  const sourceMainSchedule = prepareLiveMainSchedule(live, settings);
   const liveMainSchedule = overwriteSchedule ? live.mainUnavailable
-    ? { nextDate: '', releaseDay: '', releaseTime: '' } : prepareLiveMainSchedule(live, settings) : {};
+    ? { nextDate: '', releaseDay: '', releaseTime: '' } : sourceMainSchedule : {};
   const liveLanguageTracks = prepareLiveLanguageTracks([...(live.languageTracks || []), ...(live.unscheduledLanguageTracks || [])]
     .filter((track) => !series.liveChartImportLanguage || track.code === series.liveChartImportLanguage), settings);
   const finishedLanguageCodes = new Set(live.finishedLanguageCodes || []);
@@ -232,15 +249,20 @@ export async function syncOneSeriesFromLiveChart(store, series, options = {}) {
     current, patch, live.finishedLanguageCodes || [], settings, now
   );
 
-  if (!hasChanged(series, patch)) {
-    return { changed: false, live };
+  const changed = hasChanged(series, patch);
+  let updated;
+  if (changed) {
+    updated = await store.upsertSeries(patch, {
+      now,
+      source: options.source || (overwriteSchedule ? "pre-post-livechart-sync" : "livechart-sync")
+    });
   }
-
-  const updated = await store.upsertSeries(patch, {
-    now,
-    source: options.source || (overwriteSchedule ? "pre-post-livechart-sync" : "livechart-sync")
-  });
-  return { changed: true, live, updated };
+  const releases = describeLiveChartReleases(
+    live, sourceMainSchedule, prepareLiveLanguageTracks(live.languageTracks, settings),
+    current.languageTracks || [], languageTracks
+  );
+  await recordCheck({ releases });
+  return changed ? { changed, live, updated } : { changed, live };
 }
 
 export async function syncAllLiveChart(store, options = {}) {

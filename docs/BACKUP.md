@@ -7,7 +7,9 @@ Anime Sheduler stores its data in a JSON database. Backups are important before 
 Open `Settings` -> `Backup`.
 
 - `Download backup` exports the complete Anime Sheduler database as JSON.
-- `Restore backup` accepts an Anime Sheduler export or a raw `db.json` and replaces the current database.
+- `Review backup` accepts an Anime Sheduler export or a raw `db.json`. It compares the series and post counts, Discord channels and roles, automatic posts, time zone, and LiveChart schedules before making any changes.
+- Select `Restore this backup` after reviewing the comparison. Restore replaces the current database and first saves a copy of the previous state beside this instance's database file. If the comparison changed while the review was open, review it again before confirming. Upload the file again if the review expired.
+- `Download pre-restore backup` retrieves the latest copy made before a restore. To roll back, download that copy and upload it through the same review and restore flow.
 
 Backups include:
 
@@ -71,7 +73,7 @@ sudo cp /var/lib/anime-sheduler/db.json \
 4. Copy your `.env` values manually. Do not put bot tokens into the database backup.
 5. Start the new instance.
 6. Open `Settings` -> `Backup`.
-7. Restore the backup JSON.
+7. Upload the backup JSON, review the settings and totals, then confirm the restore.
 8. Check `Settings` -> `Discord` and confirm selected channels still match the new bot/server access.
 
 If the Discord bot is invited to the same servers, channel and role IDs usually continue to work.

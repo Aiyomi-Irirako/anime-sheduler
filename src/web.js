@@ -1,14 +1,16 @@
 import express from "express";
 import multer from "multer";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { DateTime } from "luxon";
-import { buildAnnouncement, buildUpcomingSummary, releaseMentionRoleIds } from "./discordBot.js";
+import { buildAnnouncement, buildUpcomingSummary, getChannelIds, releaseMentionRoleIds } from "./discordBot.js";
 import { APP_NAME, APP_VERSION, MAX_EPISODE_BATCH_SIZE, STATUS_OPTIONS, WEEKDAYS } from "./constants.js";
 import {
   getFinishedDeletionDate,
   getCompletionNotificationDate,
   getNextCompletionDigestDate,
   getNextAnnouncementRelease,
+  listUpcoming,
   listUpcomingTodayTomorrow,
   formatReleaseDate,
   formatEpisodeEntries,
@@ -33,8 +35,10 @@ import { fetchLiveChartSeriesDraft } from "./livechartImport.js";
 import { liveChartId } from "./livechartHttp.js";
 import { findDuplicateSeries } from "./seriesIdentity.js";
 import { createSeriesFormBaseline, mergeSeriesFormInput } from "./seriesForm.js";
+import { normalizeSeries } from "./store.js";
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+const BACKUP_REVIEW_TTL_MS = 10 * 60 * 1000;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -64,8 +68,11 @@ function backupDataFromJson(jsonText) {
     throw new Error("Backup JSON could not be parsed");
   }
 
-  const data = parsed?.data && typeof parsed.data === "object" ? parsed.data : parsed;
-  if (!data || typeof data !== "object" || !data.settings || typeof data.settings !== "object" || !Array.isArray(data.series)) {
+  const isObject = (value) => value && typeof value === "object" && !Array.isArray(value);
+  const data = isObject(parsed?.data) ? parsed.data : parsed;
+  if (!isObject(data) || !isObject(data.settings) || !Array.isArray(data.series)
+      || data.series.some((series) => !isObject(series) || typeof series.title !== "string" || !cleanString(series.title))
+      || (data.posts !== undefined && (!Array.isArray(data.posts) || data.posts.some((post) => !isObject(post))))) {
     throw new Error("Backup JSON does not look like an Anime Sheduler database export");
   }
 
@@ -126,6 +133,7 @@ function renderPage(title, content) {
     </div>
     <nav class="nav-links">
       <a href="/">Dashboard</a>
+      <a href="/calendar">Calendar</a>
       <a href="/finished">Finished</a>
       <a href="/completion">Completion</a>
       <a href="/series/new">New Series</a>
@@ -484,7 +492,7 @@ function renderSettings(settings, discordEnabled, channelGroups = [], roleGroups
         <input type="number" min="0" name="reminderMinutes" value="${escapeHtml(settings.reminderMinutes)}">
       </label>
       <label>
-        <span>Lookahead days</span>
+        <span>Calendar lookahead days</span>
         <input type="number" min="1" name="lookaheadDays" value="${escapeHtml(settings.lookaheadDays)}">
       </label>
       <label>
@@ -664,23 +672,66 @@ function renderBackupPanel(dataStats = {}) {
         </div>
         <div class="form-actions">
           <a class="button" href="/database/export">Download backup</a>
+          ${dataStats.hasRestoreSnapshot ? '<a class="button secondary" href="/database/rollback-copy">Download pre-restore backup</a>' : ""}
         </div>
       </article>
-      <form method="post" action="/database/import" enctype="multipart/form-data" class="stack backup-card" onsubmit="return confirm('Restore this backup? Current database content will be replaced.')">
+      <form method="post" action="/database/import" enctype="multipart/form-data" class="stack backup-card">
         <div>
           <h3>Restore database</h3>
-          <p class="muted-text">Use an Anime Sheduler JSON backup. This replaces the current local database after upload.</p>
+          <p class="muted-text">Upload an Anime Sheduler JSON backup to review its contents before replacing this instance’s database.</p>
         </div>
         <label>
           <span>Backup JSON</span>
           <input type="file" name="databaseFile" accept=".json,application/json" required>
         </label>
         <div class="form-actions">
-          <button type="submit">Restore backup</button>
+          <button type="submit">Review backup</button>
         </div>
       </form>
     </div>
   </section>`;
+}
+
+function renderBackupRestoreReview({ current, incoming, token }, notice = "") {
+  const ids = (value) => value.join(", ") || "None";
+  const enabled = (value) => value ? "On" : "Off";
+  const scheduled = (value, time) => value ? `On at ${time}` : "Off";
+  const values = (data) => [
+    ["Series", data.series],
+    ["Post logs", data.posts],
+    ["Discord channels", ids(data.discordChannelIds)],
+    ["Release roles", ids(data.discordReleaseRoleIds)],
+    ["Language roles", ids(data.discordLanguageRoleIds)],
+    ["Missing-time roles", ids(data.discordMissingTimeRoleIds)],
+    ["Automatic Discord posts (saved setting)", enabled(data.automaticDiscordPostsEnabled)],
+    ["Time zone", data.timeZone],
+    ["Daily LiveChart sync", scheduled(data.liveChartSyncEnabled, data.liveChartSyncTime)],
+    ["Daily LiveChart discovery", scheduled(data.liveChartDiscoveryEnabled, data.liveChartDiscoveryTime)]
+  ];
+  const next = values(incoming);
+  const rows = values(current).map(([label, before], index) => {
+    const [, after] = next[index];
+    return `<tr><th scope="row">${escapeHtml(label)}</th><td>${escapeHtml(before)}</td>
+      <td>${before === after ? escapeHtml(after) : `<strong>${escapeHtml(after)}</strong>`}</td></tr>`;
+  }).join("");
+
+  return renderPage("Review backup restore", `<section class="panel">
+    <div class="section-title"><div>
+      <h1>Review backup restore</h1>
+      <p>Confirm to replace this instance’s database. The previous database will be saved as a pre-restore backup.</p>
+    </div></div>
+    ${notice ? `<div class="notice error" role="status">${escapeHtml(notice)}</div>` : ""}
+    ${automaticPostsLocked() ? '<p class="notice">Automatic Discord posts are disabled by this server’s configuration.</p>' : ""}
+    <div class="table-wrap"><table>
+      <thead><tr><th scope="col">Item</th><th scope="col">Current database</th><th scope="col">Uploaded backup</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <form class="form-actions" method="post" action="/database/restore">
+      <input type="hidden" name="restoreToken" value="${escapeHtml(token)}">
+      <a class="button secondary" href="/settings#settings-backup">Cancel</a>
+      <button type="submit">Restore this backup</button>
+    </form>
+  </section>`);
 }
 
 function renderServiceBadges(value, preferredService = "") {
@@ -740,44 +791,36 @@ function renderUpcomingTime(release, settings) {
   </div>`;
 }
 
-function renderUpcoming(upcoming, settings, discordEnabled) {
-  const renderEpisodeStack = (series, release) =>
-    `<div class="episode-stack">${formatEpisodeEntries(series, release)
-      .map((entry) => `<span class="episode-line ${escapeHtml(entry.kind)}">${escapeHtml(entry.text)}</span>`)
-      .join("")}</div>`;
+function renderUpcomingDay(date, title, items, settings, emptyText = "") {
+  const rows = items.map(({ series, release }) => `<li>
+    ${renderUpcomingTime(release, settings)}
+    <span><a class="title-link" href="/series/${encodeURIComponent(series.id)}">${escapeHtml(series.title)}</a>
+      <span class="episode-stack">${formatEpisodeEntries(series, release)
+        .map((entry) => `<span class="episode-line ${escapeHtml(entry.kind)}">${escapeHtml(entry.text)}</span>`)
+        .join("")}</span>
+    </span>
+    ${renderServiceBadges(series.service, series.preferredService)}
+  </li>`).join("");
 
-  const zone = settings.timeZone || "Europe/Berlin";
-  const now = DateTime.now().setZone(zone);
+  return `<section class="upcoming-day">
+    <div class="upcoming-day-header">
+      <h3>${escapeHtml(title)}</h3>
+      <span>${escapeHtml(date.setLocale("en").toFormat("dd LLL yyyy"))}</span>
+    </div>
+    <ol class="upcoming-list">${rows || `<li class="empty">${escapeHtml(emptyText)}</li>`}</ol>
+  </section>`;
+}
+
+function renderUpcoming(upcoming, settings, discordEnabled, now) {
   const buckets = [
     { title: "Today", date: now, empty: "No releases today." },
     { title: "Tomorrow", date: now.plus({ days: 1 }), empty: "No releases tomorrow." }
   ];
-
-  const groups = buckets
-    .map((bucket) => {
-      const key = bucket.date.toISODate();
-      const items = upcoming.filter(({ release }) => releaseDateKey(release, settings) === key);
-      const rows = items.length
-        ? items
-            .map(({ series, release }) => {
-              return `<li>
-                ${renderUpcomingTime(release, settings)}
-                <span><span class="series-name">${escapeHtml(series.title)}</span>${renderEpisodeStack(series, release)}</span>
-                ${renderServiceBadges(series.service, series.preferredService)}
-              </li>`;
-            })
-            .join("")
-        : `<li class="empty">${escapeHtml(bucket.empty)}</li>`;
-
-      return `<section class="upcoming-day">
-        <div class="upcoming-day-header">
-          <h3>${escapeHtml(bucket.title)}</h3>
-          <span>${escapeHtml(bucket.date.setLocale("en").toFormat("cccc, dd LLL yyyy"))}</span>
-        </div>
-        <ol class="upcoming-list">${rows}</ol>
-      </section>`;
-    })
-    .join("");
+  const groups = buckets.map(({ title, date, empty }) => {
+    const key = date.toISODate();
+    const items = upcoming.filter(({ release }) => releaseDateKey(release, settings) === key);
+    return renderUpcomingDay(date, title, items, settings, empty);
+  }).join("");
 
   return `<section class="panel">
     <div class="section-title split">
@@ -785,12 +828,39 @@ function renderUpcoming(upcoming, settings, discordEnabled) {
         <h2>Upcoming Episodes</h2>
         <p>Only releases scheduled for today and tomorrow are shown here.</p>
       </div>
-      <form method="post" action="/post-upcoming">
+      <form class="form-actions" method="post" action="/post-upcoming">
+        <a class="button secondary" href="/calendar">View calendar</a>
         <button type="submit" ${discordEnabled ? "" : "disabled"}>Post to Discord</button>
       </form>
     </div>
     <div class="upcoming-days">${groups}</div>
   </section>`;
+}
+
+function renderCalendar({ series, settings }) {
+  const zone = settings.timeZone || "Europe/Berlin";
+  const now = DateTime.now().setZone(zone);
+  const days = Math.max(1, parseInteger(settings.lookaheadDays) ?? 14);
+  const releasesByDate = new Map();
+  for (const item of listUpcoming(series, settings, days, now)) {
+    const key = releaseDateKey(item.release, settings);
+    if (!releasesByDate.has(key)) releasesByDate.set(key, []);
+    releasesByDate.get(key).push(item);
+  }
+  const groups = Array.from(releasesByDate, ([key, items]) => {
+    const date = DateTime.fromISO(key, { zone, locale: "en" });
+    return renderUpcomingDay(date, date.toFormat("cccc"), items, settings);
+  }).join("");
+  return renderPage("Release Calendar", `<section class="panel">
+    <div class="section-title split">
+      <div>
+        <h1>Release Calendar</h1>
+        <p>${days === 1 ? "Today" : `Next ${days} days, including today`} · ${escapeHtml(zone)}</p>
+      </div>
+      <a class="button secondary" href="/settings#settings-schedule">Calendar settings</a>
+    </div>
+    <div class="upcoming-days">${groups || '<p class="empty">No scheduled episodes in this period.</p>'}</div>
+  </section>`);
 }
 
 function renderSeriesTable(seriesList, settings, emptyText = "No series imported yet.") {
@@ -860,7 +930,8 @@ function renderSeriesTable(seriesList, settings, emptyText = "No series imported
 }
 
 function renderDashboard(data, discordEnabled, query) {
-  const upcoming = listUpcomingTodayTomorrow(data.series, data.settings);
+  const now = DateTime.now().setZone(data.settings.timeZone || "Europe/Berlin");
+  const upcoming = listUpcomingTodayTomorrow(data.series, data.settings, now);
   const dashboardSeries = data.series.filter((series) => !isSeriesComplete(series));
   return renderPage(
     APP_NAME,
@@ -868,7 +939,7 @@ function renderDashboard(data, discordEnabled, query) {
     ${renderHero(data, discordEnabled)}
     ${renderStats(data, upcoming)}
     <div class="main-column">
-      ${renderUpcoming(upcoming, data.settings, discordEnabled)}
+      ${renderUpcoming(upcoming, data.settings, discordEnabled, now)}
       ${renderSeriesTable(dashboardSeries, data.settings, "No active or pending series. Finished entries are in the Finished tab.")}
     </div>`
   );
@@ -1162,7 +1233,7 @@ function renderChangelogPage(data, query) {
   );
 }
 
-function renderSettingsPage(data, discordEnabled, query, channelGroups = [], roleGroups = [], discoveryStatus = {}, syncStatus = {}) {
+function renderSettingsPage(data, discordEnabled, query, channelGroups = [], roleGroups = [], discoveryStatus = {}, syncStatus = {}, hasRestoreSnapshot = false) {
   return renderPage(
     "Settings",
     `${messageFromQuery(query)}
@@ -1179,6 +1250,7 @@ function renderSettingsPage(data, discordEnabled, query, channelGroups = [], rol
       ${renderSettings(data.settings, discordEnabled, channelGroups, roleGroups, {
         series: data.series.length,
         posts: data.posts.length,
+        hasRestoreSnapshot,
         discovery: data.liveChartDiscovery,
         discoveryStatus,
         syncStatus
@@ -1274,7 +1346,46 @@ function renderSeriesLifecyclePanel(series, settings) {
   </section>`;
 }
 
-function renderSeriesForm(series, settings, query, isNew = false, discordEnabled = true, syncStatus = {}) {
+function renderLiveChartDiagnosis(series, settings, check) {
+  let content;
+  if (series.scheduleMode === "manual") {
+    content = "<p>This series uses Manual schedule. Its release dates come from the editor.</p>";
+  } else if (!series.scheduleLink) {
+    content = "<p>Add a LiveChart link to check this series.</p>";
+  } else if (!check) {
+    content = "<p>No check recorded for this LiveChart source yet.</p>";
+  } else {
+    const preferred = normalizePreferredScheduleLanguage(series.liveChartImportLanguage || settings.preferredScheduleLanguage);
+    const messages = {
+      "no-subtitle-match": preferred
+        ? `LiveChart found no schedule with ${languageLabel(preferred)} subtitles.`
+        : "LiveChart found no schedule for the selected subtitle language.",
+      "no-upcoming-release": "LiveChart returned no upcoming release for this version.",
+      finished: "LiveChart lists this release as ended.",
+      "episode-unknown": "LiveChart has not specified the next episode.",
+      "date-unknown": "LiveChart has not specified an exact release date.",
+      "time-unknown": "LiveChart lists a date but has not specified a time.",
+      scheduled: "LiveChart lists an episode, date and time."
+    };
+    const time = (iso) => {
+      const local = DateTime.fromISO(iso).setZone(settings.timeZone || "Europe/Berlin");
+      return `<time datetime="${escapeHtml(iso)}">${escapeHtml(local.setLocale("en").toFormat("dd LLL yyyy HH:mm"))}</time>`;
+    };
+    const releases = check.releases.map(({ code, status, service }) => {
+      const version = code ? `${languageLabel(code)} dub` : "Original / subtitles";
+      return `<li><strong>${escapeHtml(version)}</strong>${service ? ` (${escapeHtml(service)})` : ""}. ${escapeHtml(messages[status])}</li>`;
+    }).join("");
+    content = `
+      <p>${check.successfulAt ? `Last successful check on ${time(check.successfulAt)}.` : "No successful check yet."}</p>
+      ${check.error ? `<p>Check failed on ${time(check.attemptedAt)}. ${escapeHtml(check.error)}</p>` : ""}
+      ${releases ? `${check.error ? "<p>Last successful result</p>" : ""}<ul>${releases}</ul>` : ""}`;
+  }
+  return `<section class="livechart-diagnosis" aria-label="LiveChart diagnosis">
+    <h2>LiveChart diagnosis</h2>${content}
+  </section>`;
+}
+
+function renderSeriesForm(series, settings, query, isNew = false, discordEnabled = true, syncStatus = {}, liveChartCheck = null) {
   const release = getNextAnnouncementRelease(series, settings);
   const action = isNew ? "/series" : `/series/${encodeURIComponent(series.id)}`;
   const title = isNew ? "New Series" : series.title;
@@ -1291,6 +1402,7 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
         <a class="button secondary" href="/">Back</a>
       </div>
       ${isNew ? '' : renderLiveChartSyncStatus(syncStatus)}
+      ${isNew ? '' : renderLiveChartDiagnosis(series, settings, liveChartCheck)}
       <form id="series-form" class="grid-form edit-form" method="post" action="${action}" data-series-id="${isNew ? '' : escapeHtml(series.id)}">
         ${isNew ? '' : `<input type="hidden" name="seriesFormBaseline" value="${escapeHtml(JSON.stringify(createSeriesFormBaseline(series)))}">`}
         <input type="hidden" name="seriesFormChangedFields" value="[]">
@@ -1398,6 +1510,7 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
               ? ""
               : '<button type="submit" data-livechart-sync-button ' + (syncStatus.running ? 'disabled ' : '') + 'formaction="' + action + '/sync-livechart">LiveChart sync</button>'
           }
+          ${isNew ? "" : `<button type="button" class="button secondary" data-discord-preview-url="${action}/discord-preview" aria-controls="discord-post-preview">Preview Discord post</button>`}
           ${
             isNew
               ? ""
@@ -1408,9 +1521,26 @@ function renderSeriesForm(series, settings, query, isNew = false, discordEnabled
                 ">Send test post</button>"
           }
         </div>
+        ${isNew ? "" : `
+          <p class="span-2" data-discord-preview-status role="status" hidden></p>
+          <section class="discord-preview span-2" id="discord-post-preview" data-discord-preview hidden aria-label="Discord post preview">
+            <p>Preview of the current form. No changes saved or messages sent.</p>
+            <div class="discord-preview-card">
+              <h3 data-discord-preview-title></h3>
+              <p data-discord-preview-description></p>
+              <dl class="discord-preview-fields" data-discord-preview-fields></dl>
+            </div>
+            <dl class="discord-preview-fields">
+              <dt>Configured target channel IDs</dt>
+              <dd data-discord-preview-channels></dd>
+              <dt>Configured role mentions</dt>
+              <dd data-discord-preview-roles></dd>
+            </dl>
+          </section>`}
       </form>
     </section>
     <script src="/livechart-import.js" defer></script>
+    ${isNew ? "" : '<script src="/discord-preview.js" defer></script>'}
     ${isNew ? '' : renderSeriesLifecyclePanel(series, settings)}
     ${
       isNew
@@ -1491,6 +1621,18 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
   const liveChartSync = options.liveChartSync || getLiveChartSyncController(store);
   const readLiveChartTitle = options.fetchTitle || fetchLiveChartTitle;
   const readSeriesDraft = options.fetchSeriesDraft || fetchLiveChartSeriesDraft;
+  let pendingBackupReview;
+  let backupReviewTimer;
+  const clearBackupReview = () => {
+    pendingBackupReview = undefined;
+    clearTimeout(backupReviewTimer);
+  };
+  const stageBackupReview = (review) => {
+    clearBackupReview();
+    pendingBackupReview = { ...review, token: randomUUID(), expiresAt: Date.now() + BACKUP_REVIEW_TTL_MS };
+    backupReviewTimer = setTimeout(clearBackupReview, BACKUP_REVIEW_TTL_MS).unref();
+    return pendingBackupReview;
+  };
   app.post('/api/livechart/series-preview', asyncRoute(async (req, res) => {
     const scheduleLink = typeof req.body.scheduleLink === 'string' ? req.body.scheduleLink.trim() : '';
     if (!liveChartId(scheduleLink)) return res.status(400).json({ error: 'Enter a valid LiveChart anime link.' });
@@ -1531,6 +1673,8 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
     })
   );
 
+  app.get("/calendar", (req, res) => res.send(renderCalendar(store.snapshot())));
+
   app.get(
     "/finished",
     asyncRoute(async (req, res) => {
@@ -1555,7 +1699,7 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
   app.get(
     "/settings",
     asyncRoute(async (req, res) => {
-      const [channelGroups, roleGroups] = await Promise.all([
+      const [channelGroups, roleGroups, hasRestoreSnapshot] = await Promise.all([
         discord.listTextChannels().catch((error) => {
           console.warn(`Could not load Discord channels: ${error.message}`);
           return [];
@@ -1563,9 +1707,10 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
         discord.listMentionRoles().catch((error) => {
           console.warn(`Could not load Discord roles: ${error.message}`);
           return [];
-        })
+        }),
+        store.hasRestoreSnapshot()
       ]);
-      res.send(renderSettingsPage(store.snapshot(), discord.enabled, req.query, channelGroups, roleGroups, discovery.status(), liveChartSync.status()));
+      res.send(renderSettingsPage(store.snapshot(), discord.enabled, req.query, channelGroups, roleGroups, discovery.status(), liveChartSync.status(), hasRestoreSnapshot));
     })
   );
 
@@ -1653,12 +1798,48 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
     "/database/import",
     upload.single("databaseFile"),
     asyncRoute(async (req, res) => {
+      res.set("Cache-Control", "no-store");
       try {
         const json = uploadedText(req.file, "Backup");
-        const result = await store.replaceData(backupDataFromJson(json));
-        return redirectToSettings(res, "backup", "ok", `Backup restored: ${result.series} series, ${result.posts} post logs`);
+        const review = stageBackupReview(store.prepareBackupRestore(backupDataFromJson(json)));
+        return res.send(renderBackupRestoreReview(review));
       } catch (error) {
         return redirectToSettings(res, "backup", "error", error.message);
+      }
+    })
+  );
+
+  app.post(
+    "/database/restore",
+    asyncRoute(async (req, res) => {
+      res.set("Cache-Control", "no-store");
+      const review = pendingBackupReview;
+      if (!review || req.body?.restoreToken !== review.token || Date.now() >= review.expiresAt) {
+        return redirectToSettings(res, "backup", "error", "This backup review is no longer available. Upload the backup again.");
+      }
+      clearBackupReview();
+      try {
+        const result = await store.restoreBackup(review);
+        if (!result.restored) {
+          const updated = stageBackupReview({ ...review, current: result.current });
+          return res.status(409).send(renderBackupRestoreReview(updated, "The current database changed. Review the updated comparison before restoring."));
+        }
+        return redirectToSettings(res, "backup", "ok", `Backup restored: ${result.series} series, ${result.posts} post logs. The previous database is available as a pre-restore backup.`);
+      } catch (error) {
+        return redirectToSettings(res, "backup", "error", error.message);
+      }
+    })
+  );
+
+  app.get(
+    "/database/rollback-copy",
+    asyncRoute(async (req, res) => {
+      res.set("Cache-Control", "no-store");
+      try {
+        const json = await store.readRestoreSnapshot();
+        return res.attachment("anime-sheduler-before-restore.json").type("application/json").send(json);
+      } catch {
+        return redirectToSettings(res, "backup", "error", "No pre-restore backup is available to download.");
       }
     })
   );
@@ -1752,7 +1933,8 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
     asyncRoute(async (req, res) => {
       const series = store.getSeries(req.params.id);
       if (!series) return res.status(404).send(renderPage("Not Found", "<p>Series not found.</p>"));
-      res.send(renderSeriesForm(series, store.getSettings(), req.query, false, discord.enabled, liveChartSync.status()));
+      res.send(renderSeriesForm(series, store.getSettings(), req.query, false, discord.enabled,
+        liveChartSync.status(), store.getLiveChartCheck?.(series)));
     })
   );
 
@@ -1777,6 +1959,34 @@ export function createWebApp(store, discord, rootDir = process.cwd(), options = 
       const returnTo = req.body.returnTo === "/completion?view=handled" ? "/completion?view=handled&" : "/completion?";
       res.redirect(`${returnTo}ok=Completion reminder updated`);
     })
+  );
+
+  app.post(
+    "/series/:id/discord-preview",
+    (req, res, next) => {
+      res.set("Cache-Control", "no-store");
+      const existing = store.getSeries(req.params.id);
+      if (!existing) return res.status(404).json({ error: "Series not found." });
+      if (!req.body || typeof req.body !== "object") return res.status(400).json({ error: "Series form is required." });
+
+      try {
+        const input = mergeSeriesFormInput(existing, formToSeries(req.body, existing.id), req.body.seriesFormBaseline, req.body.seriesFormChangedFields);
+        const series = normalizeSeries({ ...existing, ...input }, existing);
+        if (!series.title) return res.status(400).json({ error: "A series title is required." });
+        store.assertUniqueSeries(series, existing);
+
+        const settings = store.getSettings();
+        const release = getNextAnnouncementRelease(series, settings);
+        if (!release) return res.status(400).json({ error: "No release date could be calculated." });
+
+        const [embed] = buildAnnouncement(series, release, settings).embeds;
+        return res.json({ embed: embed.toJSON(), channelIds: getChannelIds(store), roleIds: releaseMentionRoleIds(release, settings) });
+      } catch (error) {
+        if (error.code === "INVALID_SERIES_FORM_BASELINE") return res.status(400).json({ error: error.message });
+        if (error.code === "DUPLICATE_SERIES") return res.status(409).json({ error: error.message });
+        return next(error);
+      }
+    }
   );
 
   app.post(
