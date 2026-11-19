@@ -1,4 +1,6 @@
 import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DateTime } from "luxon";
 import { DEFAULT_TIME_ZONE } from "./constants.js";
@@ -25,6 +27,7 @@ import { normalizeDiscoverySeason, normalizeDiscoveryState } from "./livechartDi
 import { findDuplicateSeries, seriesIdentity } from "./seriesIdentity.js";
 import { normalizeLateDubNotices, planLateDubNotices } from "./lateDub.js";
 import { normalizeReleaseCompletionNotices } from "./releaseCompletion.js";
+import { liveChartCheckSource, normalizeLiveChartCheck } from "./livechartDiagnostics.js";
 
 function normalizeDiscordChannelIds(value) {
   const raw = Array.isArray(value) ? value : value ? [value] : [];
@@ -88,6 +91,7 @@ const DEFAULT_DATA = {
   posts: [],
   completionDigest: normalizeCompletionDigest(),
   liveChartDiscovery: normalizeDiscoveryState(),
+  liveChartChecks: {},
   changeLog: []
 };
 
@@ -288,6 +292,11 @@ function normalizeStoreData(input = {}) {
   data.posts = Array.isArray(data.posts) ? data.posts : [];
   data.completionDigest = normalizeCompletionDigest(data.completionDigest);
   data.liveChartDiscovery = normalizeDiscoveryState(data.liveChartDiscovery);
+  const checks = data.liveChartChecks || {};
+  data.liveChartChecks = Object.fromEntries(data.series
+    .filter(({ id }) => Object.hasOwn(checks, id))
+    .map(({ id }) => [id, normalizeLiveChartCheck(checks[id])])
+    .filter(([, check]) => check));
   data.settings.liveChartDiscoverySeason = normalizeDiscoverySeason(data.settings.liveChartDiscoverySeason);
   data.settings.liveChartDiscoveryEnabled = parseBoolean(data.settings.liveChartDiscoveryEnabled);
   data.settings.liveChartSyncTime = normalizeDailyTime(settingsSource.liveChartSyncTime, settingsSource.liveChartSyncHour, 5);
@@ -301,7 +310,28 @@ function normalizeStoreData(input = {}) {
   return data;
 }
 
-function normalizeSeries(input, existing = {}) {
+function backupRestoreOverview({ settings, series, posts }) {
+  return {
+    series: series.length,
+    posts: posts.length,
+    discordChannelIds: normalizeDiscordChannelIds(settings.discordChannelIds.length
+      ? settings.discordChannelIds : settings.discordChannelId || process.env.DISCORD_CHANNEL_ID),
+    discordReleaseRoleIds: normalizeDiscordRoleIds(settings.discordReleaseRoleIds.length
+      ? settings.discordReleaseRoleIds : settings.discordReleaseRoleId),
+    discordLanguageRoleIds: normalizeDiscordRoleIds(settings.discordLanguageRoleIds.length
+      ? settings.discordLanguageRoleIds : settings.discordLanguageRoleId),
+    discordMissingTimeRoleIds: normalizeDiscordRoleIds(settings.discordMissingTimeRoleIds.length
+      ? settings.discordMissingTimeRoleIds : settings.discordMissingTimeRoleId),
+    automaticDiscordPostsEnabled: settings.automaticDiscordPostsEnabled,
+    timeZone: settings.timeZone,
+    liveChartSyncEnabled: Boolean(settings.liveChartSyncEnabled),
+    liveChartSyncTime: settings.liveChartSyncTime,
+    liveChartDiscoveryEnabled: settings.liveChartDiscoveryEnabled,
+    liveChartDiscoveryTime: settings.liveChartDiscoveryTime
+  };
+}
+
+export function normalizeSeries(input, existing = {}) {
   const now = DateTime.now().toISO();
   const nextEpisode = parseInteger(input.nextEpisode);
   const episodeBatchSize =
@@ -591,6 +621,27 @@ export class Store {
     await this.save();
   }
 
+  getLiveChartCheck(series) {
+    const check = this.data.liveChartChecks[series.id];
+    return check?.source === liveChartCheckSource(series, this.data.settings) ? check : null;
+  }
+
+  async recordLiveChartCheck(id, { source, attemptedAt, releases, error }) {
+    const series = this.getSeries(id);
+    if (!series || series.scheduleMode === "manual" ||
+        source !== liveChartCheckSource(series, this.data.settings)) return;
+    const previous = this.getLiveChartCheck(series);
+    if (previous && DateTime.fromISO(previous.attemptedAt) > DateTime.fromISO(attemptedAt)) return;
+    const check = normalizeLiveChartCheck({
+      source, attemptedAt, error,
+      successfulAt: error ? previous?.successfulAt : attemptedAt,
+      releases: error ? previous?.releases : releases
+    });
+    if (!check) return;
+    this.data.liveChartChecks = { ...this.data.liveChartChecks, [id]: check };
+    await this.save();
+  }
+
   listSeries() {
     return this.data.series;
   }
@@ -651,6 +702,7 @@ export class Store {
     this.data.series = this.data.series.filter((series) => series.id !== id);
     const deleted = before - this.data.series.length;
     if (deleted) {
+      delete this.data.liveChartChecks[id];
       this.recordSeriesChange("deleted", cleanString(options.source) || "manual", existing, null);
       await this.save();
     }
@@ -696,6 +748,54 @@ export class Store {
       series: this.data.series.length,
       posts: this.data.posts.length
     };
+  }
+
+  prepareBackupRestore(input) {
+    const data = normalizeStoreData(input);
+    return { data, current: backupRestoreOverview(this.data), incoming: backupRestoreOverview(data) };
+  }
+
+  #restoreSnapshotPath() {
+    return path.join(path.dirname(this.filePath), `.${path.basename(this.filePath)}.before-restore.json`);
+  }
+
+  hasRestoreSnapshot() {
+    return fs.stat(this.#restoreSnapshotPath()).then((stat) => stat.isFile(), () => false);
+  }
+
+  async readRestoreSnapshot() {
+    return fs.readFile(this.#restoreSnapshotPath(), "utf8");
+  }
+
+  async restoreBackup({ data, current: reviewed }) {
+    let writes;
+    do {
+      writes = this.saveQueue;
+      await writes;
+    } while (writes !== this.saveQueue);
+
+    const current = backupRestoreOverview(this.data);
+    if (JSON.stringify(current) !== JSON.stringify(reviewed)) return { current };
+
+    // Keep the checkpoint and replacement in the same turn so a scheduled write
+    // cannot change the current data between capturing it and replacing it.
+    const checkpoint = this.#restoreSnapshotPath();
+    const operation = `${checkpoint}.${randomUUID()}`;
+    const next = `${operation}.incoming.tmp`;
+    const previous = `${operation}.outgoing.tmp`;
+    const writeOptions = { encoding: "utf8", mode: 0o600, flag: "wx" };
+    try {
+      writeFileSync(next, JSON.stringify(data, null, 2), writeOptions);
+      writeFileSync(previous, JSON.stringify(this.data, null, 2), writeOptions);
+      renameSync(previous, checkpoint);
+      renameSync(next, this.filePath);
+    } catch (error) {
+      await Promise.allSettled([fs.rm(next, { force: true }), fs.rm(previous, { force: true })]);
+      throw new Error("Could not save the rollback copy or replace the database.", { cause: error });
+    }
+
+    this.data = data;
+    return { restored: true, series: data.series.length, posts: data.posts.length };
   }
 
   async addPostLog(entry) {

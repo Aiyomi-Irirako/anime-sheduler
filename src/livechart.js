@@ -315,6 +315,8 @@ export function parseLiveChartEpisodes(html, options = {}) {
     ? preferredMainRows.find((row) => isUpcomingSchedule(row, options, DateTime.fromSeconds(nowTimestamp))) : null;
   const mainEpisodeBatchSize = episodeBatchSize(upcomingItems(selectedMainItems, nowTimestamp), main);
   const mainRows = lockToPreferred ? preferredMainRows : selectMainItems(allMainRows, preferredCodes);
+  const diagnosticMain = main || pendingMain || mainRows.find((row) =>
+    !Number.isFinite(row.episode) && isUpcomingSchedule(row, options, DateTime.fromSeconds(nowTimestamp)));
   const hasUpcomingMain = upcomingItems(selectedMainItems, nowTimestamp).length > 0;
   const mainFinished = !main && mainRows.some((item) => item.isReleased) && !hasUpcomingMain;
   const preferredReleaseFinished =
@@ -350,6 +352,7 @@ export function parseLiveChartEpisodes(html, options = {}) {
         releaseTimestamp: Number.isFinite(item.episode) ? item.timestamp : Number.MAX_SAFE_INTEGER,
         releaseDate: Number.isFinite(item.episode) ? item.partialDate : '',
         schedulePrecision: item.precision,
+        scheduleService: item.services.join(", "),
         requiresConfirmation: item.requiresConfirmation,
         source: item.title || "livechart",
         timestamp: item.timestamp,
@@ -406,6 +409,8 @@ export function parseLiveChartEpisodes(html, options = {}) {
     mainEpisodeUnknown: Boolean(pendingMain),
     mainReleaseUnconfirmed: Boolean(main?.requiresConfirmation),
     mainSchedulePrecision: main?.precision ?? null,
+    mainScheduleService: diagnosticMain?.services.join(", ") || "",
+    mainScheduleEpisodeUnspecified: Boolean(diagnosticMain && !Number.isFinite(diagnosticMain.episode)),
     mainUnavailable: Boolean(options.requirePreferredLanguage && preferredCodes.length && !preferredMainRows.length),
     dubNextEpisode: germanDub?.nextEpisode ?? null,
     languageTracks,

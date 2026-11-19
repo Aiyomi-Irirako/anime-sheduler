@@ -42,7 +42,7 @@ function normalizeRoleIds(value) {
   return normalizeChannelIds(value);
 }
 
-function getChannelIds(store) {
+export function getChannelIds(store) {
   const settings = store.getSettings();
   const configured = normalizeChannelIds(settings.discordChannelIds);
   if (configured.length) return configured;

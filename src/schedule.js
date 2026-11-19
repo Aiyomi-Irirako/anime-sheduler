@@ -320,23 +320,14 @@ export function getNextAnnouncementRelease(series, settings, base = DateTime.now
 export function listUpcoming(seriesList, settings, days = 14, base = DateTime.now()) {
   const zone = settings.timeZone || "Europe/Berlin";
   const now = base.setZone(zone);
-  const end = now.plus({ days });
-
-  return seriesList
-    .flatMap((series) => [
-      { series, release: getNextRelease(series, settings, now) },
-      ...enabledLanguageTracks(series).map((track) => ({ series, track, release: getNextLanguageRelease(series, track, settings, now) }))
-    ])
+  const start = now.startOf("day");
+  const end = start.plus({ days });
+  return allCalculatedReleases(seriesList, settings, now)
     .filter(({ release }) => {
-      if (!release) return false;
-      if (release.dateTime) return release.dateTime <= end;
-      return release.date <= end.endOf("day");
+      const date = releaseSortTime(release);
+      return date >= start && date < end;
     })
-    .sort((a, b) => {
-      const aTime = a.release.dateTime || a.release.date;
-      const bTime = b.release.dateTime || b.release.date;
-      return aTime.toMillis() - bTime.toMillis();
-    });
+    .sort((a, b) => releaseSortTime(a.release).toMillis() - releaseSortTime(b.release).toMillis());
 }
 
 function releaseSortTime(release) {
@@ -353,17 +344,7 @@ function allCalculatedReleases(seriesList, settings, base = DateTime.now()) {
 }
 
 export function listUpcomingTodayTomorrow(seriesList, settings, base = DateTime.now()) {
-  const zone = settings.timeZone || "Europe/Berlin";
-  const now = base.setZone(zone);
-  const today = now.toISODate();
-  const tomorrow = now.plus({ days: 1 }).toISODate();
-
-  return allCalculatedReleases(seriesList, settings, now)
-    .filter(({ release }) => {
-      const date = releaseSortTime(release)?.setZone(zone).toISODate();
-      return date === today || date === tomorrow;
-    })
-    .sort((a, b) => releaseSortTime(a.release).toMillis() - releaseSortTime(b.release).toMillis());
+  return listUpcoming(seriesList, settings, 2, base);
 }
 
 export function listReleasesForWeekday(seriesList, settings, weekdayKey, base = DateTime.now()) {
